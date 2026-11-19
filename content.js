@@ -286,6 +286,7 @@
       html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#fff;
         font:12px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif;user-select:none}
       .stage{position:fixed;inset:0;overflow:hidden;background:#000;touch-action:none}
+      .zoomer{position:absolute;inset:0;transform-origin:0 0}
       .stage.zoomed{cursor:grab}.stage.panning{cursor:grabbing}
       .ui{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;gap:2px;
         padding:22px 8px 6px;background:linear-gradient(transparent,rgba(0,0,0,.8));
@@ -327,6 +328,8 @@
     doc.title = document.title || 'VideoDock';
 
     const stage = mk('div', { className: 'stage' });
+    const zoomer = mk('div', { className: 'zoomer' }); // ズームはこの専用要素のtransformで行う（サイトのstyle書き換えの影響を受けない）
+    stage.append(zoomer);
     const hint = mk('div', { className: 'hint' });
     const btnPlay = mk('button', { title: '再生/一時停止 (Space)' });
     const seek = mk('input', { className: 'seek', type: 'range', min: 0, max: 1000, step: 1, value: 0 });
@@ -352,15 +355,37 @@
     origParent.insertBefore(placeholder, v);
     const wasPlaying = !v.paused;
     v.controls = false;
-    const imp = (k, val) => v.style.setProperty(k, val, 'important');
-    for (const [k, val] of Object.entries({
+    let restored = false;
+    const VIDEO_STYLE = {
       position: 'absolute', left: '0', top: '0', right: 'auto', bottom: 'auto', width: '100%', height: '100%',
       'max-width': 'none', 'max-height': 'none', 'min-width': '0', 'min-height': '0', margin: '0', padding: '0',
       border: '0', 'box-sizing': 'border-box', 'object-fit': 'contain', 'object-position': '50% 50%',
-      background: '#000', 'transform-origin': '0 0', transform: 'none', 'clip-path': 'none',
+      background: '#000', transform: 'none', 'clip-path': 'none', filter: 'none',
       visibility: 'visible', opacity: '1', display: 'block',
-    })) imp(k, val);
-    stage.append(v);
+    };
+    // サイトのプレーヤーが再生/リサイズのたびに<video>のstyleを書き換えても、毎回こちらの値へ戻す
+    let enforcing = false;
+    function enforceVideoStyle() {
+      if (enforcing) return;
+      enforcing = true;
+      for (const [k, val] of Object.entries(VIDEO_STYLE)) {
+        if (v.style.getPropertyValue(k) !== val || v.style.getPropertyPriority(k) !== 'important') {
+          v.style.setProperty(k, val, 'important');
+        }
+      }
+      enforcing = false;
+    }
+    enforceVideoStyle();
+    zoomer.append(v);
+    const styleObserver = new MutationObserver(onVideoMutated);
+    function onVideoMutated() {
+      if (restored) return;
+      // サイトが<video>を別の場所へ動かした場合は、PiP窓へ戻す
+      if (v.parentNode !== zoomer) zoomer.append(v);
+      enforceVideoStyle();
+    }
+    styleObserver.observe(v, { attributes: true, attributeFilter: ['style', 'class', 'width', 'height'] });
+    styleObserver.observe(zoomer, { childList: true });
     if (wasPlaying && v.paused) v.play().catch(() => {});
 
     // --- ズーム/パン ---
@@ -375,7 +400,7 @@
       if (z.s <= 1.001) {
         z.s = 1;
         z.tx = z.ty = 0;
-        imp('transform', 'none');
+        zoomer.style.transform = 'none';
       } else {
         // 拡大後の映像が窓より大きければ窓全体を覆う範囲に、小さければ中央に固定する
         const { W, H } = layout();
@@ -386,7 +411,7 @@
         };
         z.tx = fit(z.tx, c.x, c.w, W);
         z.ty = fit(z.ty, c.y, c.h, H);
-        imp('transform', `translate(${z.tx}px, ${z.ty}px) scale(${z.s})`);
+        zoomer.style.transform = `translate(${z.tx}px, ${z.ty}px) scale(${z.s})`;
       }
       btnZoom.textContent = Math.round(z.s * 100) + '%';
       stage.classList.toggle('zoomed', z.s > 1);
@@ -546,10 +571,10 @@
     win.setTimeout(() => hint.classList.remove('show'), 3500);
 
     // --- 閉じたら元へ戻す（pagehideで確実に呼ばれる） ---
-    let restored = false;
     function restore() {
       if (restored) return;
       restored = true;
+      styleObserver.disconnect();
       clearTimeout(clickTimer);
       clearTimeout(hideTimer);
       vEvents.forEach((t) => v.removeEventListener(t, sync));

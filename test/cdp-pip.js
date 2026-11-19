@@ -114,21 +114,29 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
 
       for (let i = 0; i < 5; i++) { await p.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 60, y: 60, deltaX: 0, deltaY: -120 }); await sleep(80); }
       await sleep(300);
-      const z1 = parseT(await p.ev('document.querySelector("video").style.transform'));
+      const z1 = parseT(await p.ev('document.querySelector(".zoomer").style.transform'));
       check('ホイールでズームされる', !!z1 && z1.s > 2, JSON.stringify(z1));
       check('ズーム%表示が一致', (await p.ev('document.querySelector(".zoom").textContent')) === Math.round((z1 ? z1.s : 0) * 100) + '%');
 
+      // サイトのプレーヤーがstyleを書き換えたり<video>を動かしても、ズームが保たれること
+      await main.ev('(()=>{__v.style.cssText="width:10px;height:10px;transform:rotate(5deg);position:static";__v.setAttribute("class","reset");return 1})()');
+      await sleep(400);
+      check('サイトのstyle書き換え後もズームが保たれる', (await p.ev('document.querySelector(".zoomer").style.transform')) === (z1 && `translate(${z1.x}px, ${z1.y}px) scale(${z1.s})`));
+      check('サイトのstyle書き換え後も<video>が窓いっぱい', (await p.ev('(()=>{const e=document.querySelector("video");return e.style.width==="100%"&&e.style.position==="absolute"&&e.style.transform==="none"})()')) === true);
+      await main.ev('(()=>{__v.remove();document.body.append(__v);return 1})()');
+      await sleep(400);
+      check('サイトが<video>を動かしてもPiP窓へ戻される', (await p.ev('!!document.querySelector(".zoomer video")')) === true);
       await p.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 300, y: 300, button: 'left', clickCount: 1 });
       await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 240, y: 300, button: 'left' });
       await p.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 240, y: 300, button: 'left', clickCount: 1 });
       await sleep(400);
-      const z2 = parseT(await p.ev('document.querySelector("video").style.transform'));
+      const z2 = parseT(await p.ev('document.querySelector(".zoomer").style.transform'));
       check('ドラッグでパンされる(x方向 -60px)', !!z1 && !!z2 && Math.abs(z2.x - (z1.x - 60)) < 0.5, `${z1 && z1.x} -> ${z2 && z2.x}`);
       check('ドラッグ後に再生状態が変わらない', (await p.ev('!document.querySelector("video").paused')) === true);
 
       await p.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 300, y: 300, deltaX: 0, deltaY: 3000 });
       await sleep(300);
-      check('縮小で100%(transform none)に戻る', (await p.ev('document.querySelector("video").style.transform')) === 'none');
+      check('縮小で100%(transform none)に戻る', (await p.ev('document.querySelector(".zoomer").style.transform')) === 'none');
 
       if (round === 1) {
         await Promise.race([p.send('Page.bringToFront'), sleep(1000)]);
