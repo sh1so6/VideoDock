@@ -297,6 +297,16 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
     await press(main, 'w', 'KeyW', 87, 1);
     await sleep(500);
     check('Alt+Wで最大表示(トップレイヤー)になる', (await main.ev('document.getElementById("v").matches(":popover-open")')) === true);
+    // 最大表示中のホイール: 背面のページがスクロールせず、上部=音量 / 下部=シークになる
+    await main.ev('document.body.style.minHeight="4000px";document.getElementById("v").volume=0.5;document.getElementById("v").muted=false;scrollTo(0,0)');
+    for (let i = 0; i < 3; i++) { await main.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 400, y: 40, deltaX: 0, deltaY: -100 }); await sleep(100); }
+    await main.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 400, y: 40, deltaX: 0, deltaY: 100 }); // 下方向のホイールでも動かない
+    check('最大表示中の上部ホイールで音量が変わる', (await main.ev('document.getElementById("v").volume')) > 0.55);
+    await main.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 400, y: 380, deltaX: 0, deltaY: 100 }); // 中央
+    await main.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 400, y: 640, deltaX: 0, deltaY: 100 }); // 下部
+    await sleep(300);
+    check('最大表示中はホイールで背面のページがスクロールしない', (await main.ev('scrollY')) === 0, String(await main.ev('scrollY+" ih="+innerHeight')));
+    await main.ev('document.body.style.minHeight=""');
     await press(main, 'Escape', 'Escape', 27);
     await sleep(500);
     check('Escで最大表示が解除され元のstyleに戻る', (await main.ev('document.getElementById("v").hasAttribute("popover")')) === false && (await main.ev(VSTATE)) === before);

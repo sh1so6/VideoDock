@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VideoDock",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "動画の上にPiP・ズーム・ウィンドウ内最大化ボタンを埋め込みます。",
   "minimum_chrome_version": "114",
   "permissions": ["storage"],

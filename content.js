@@ -255,6 +255,74 @@
     refreshBar();
   }
 
+  // 最大化中のホイール: 背面のページをスクロールさせず、PiP窓と同じく上部=音量 / 下部=シーク（割り当て・範囲・向き・ステップは同じ設定）
+  let wideOsd = null;
+  let wideOsdTimer = 0;
+  function showWideOsd(text) {
+    if (!wideOsd) {
+      wideOsd = document.createElement('div');
+      wideOsd.setAttribute('data-videodock', '');
+      if (SUPPORTS_POPOVER) wideOsd.setAttribute('popover', 'manual');
+      wideOsd.style.cssText =
+        'position:fixed!important;inset:auto!important;left:50%!important;top:16px!important;transform:translateX(-50%)!important;' +
+        'margin:0!important;padding:6px 12px!important;border:0!important;border-radius:8px!important;background:rgba(20,20,26,.85)!important;' +
+        'color:#fff!important;font:14px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif!important;pointer-events:none!important;' +
+        'z-index:2147483647!important;width:auto!important;height:auto!important;overflow:visible!important;';
+      document.documentElement.appendChild(wideOsd);
+    }
+    wideOsd.textContent = text;
+    try {
+      if (SUPPORTS_POPOVER) {
+        if (wideOsd.matches(':popover-open')) wideOsd.hidePopover(); // 出し直して最前面に
+        wideOsd.showPopover();
+      }
+    } catch (_) {}
+    clearTimeout(wideOsdTimer);
+    wideOsdTimer = setTimeout(() => {
+      try {
+        if (SUPPORTS_POPOVER && wideOsd.matches(':popover-open')) wideOsd.hidePopover();
+      } catch (_) {}
+    }, 900);
+  }
+
+  window.addEventListener(
+    'wheel',
+    (e) => {
+      if (!wideEls.size || e.ctrlKey) return; // Ctrl+ホイール（ブラウザのズーム）は触らない
+      e.preventDefault(); // 背面のページをスクロールさせない（iframe最大化の親側も含む）
+      const v = [...wideEls].find((el) => el.tagName === 'VIDEO');
+      if (!v || !v.isConnected) return;
+      const unit = e.deltaMode === 1 ? e.deltaY / 3 : e.deltaY / 100;
+      if (unit === 0) return;
+      const h = innerHeight;
+      const zone = h * (settings.wheelZone / 100);
+      const inTop = e.clientY <= zone;
+      const inBottom = e.clientY >= h - zone;
+      if (!inTop && !inBottom) return;
+      const n = (settings.wheelInvert ? 1 : -1) * unit;
+      if (inTop === !settings.wheelSwap) {
+        const vol = clamp((v.muted ? 0 : v.volume) + (n * settings.volumeStep) / 100, 0, 1);
+        if (vol > 0) v.muted = false;
+        v.volume = vol;
+        showWideOsd(`🔊 音量 ${Math.round(vol * 100)}%`);
+      } else {
+        const d = v.duration;
+        if (!isFinite(d) || d <= 0) return showWideOsd('ライブ配信はシークできません');
+        const t = clamp(v.currentTime + n * settings.seekStep, 0, d);
+        v.currentTime = t;
+        const f = (x) => {
+          x = Math.floor(x);
+          const hh = Math.floor(x / 3600);
+          const mm = Math.floor((x % 3600) / 60);
+          const ss = String(x % 60).padStart(2, '0');
+          return hh ? `${hh}:${String(mm).padStart(2, '0')}:${ss}` : `${mm}:${ss}`;
+        };
+        showWideOsd(`${n > 0 ? '⏩' : '⏪'} ${f(t)} / ${f(d)}`);
+      }
+    },
+    { passive: false, capture: true }
+  );
+
   const exitAllWide = (origin) => [...wideEls].forEach((el) => exitWide(el, origin));
   const toggleWide = (v) => (wideEls.has(v) ? exitWide(v) : enterWide(v));
 
