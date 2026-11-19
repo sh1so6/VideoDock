@@ -11,6 +11,7 @@ const ROOT = path.resolve(__dirname, '..');
 const PORT = 9333, HTTP_PORT = 8765;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failed = 0;
+let extId = null;
 const check = (name, cond, extra = '') => {
   console.log((cond ? 'PASS' : 'FAIL') + '  ' + name + (extra ? '  ' + extra : ''));
   if (!cond) failed++;
@@ -85,6 +86,7 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
       const br = await conn(ver.webSocketDebuggerUrl);
       const r = await br.send('Extensions.loadUnpacked', { path: ROOT.split(path.sep).join('/') });
       console.log('loadUnpacked:', JSON.stringify(r.result || r.error));
+      extId = r.result && r.result.id;
       const pg = await conn(t.webSocketDebuggerUrl);
       await pg.send('Page.reload');
       await sleep(1500);
@@ -112,6 +114,22 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
       check('移動後も再生が続いている', (await p.ev('!document.querySelector("video").paused')) === true);
       check('PiP窓にスタイルが適用されている', (await p.ev('getComputedStyle(document.querySelector(".stage")).position')) === 'fixed');
 
+      // 操作バーは既定(下端に近づいたときだけ)なので、開いた直後・中央では出ない
+      const mv = (y, x = 400) => p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      const uiShown = () => p.ev('document.querySelector(".ui").classList.contains("show")');
+      check('開いた直後は操作バーが出ない(既定: edge)', (await uiShown()) === false);
+      check('開いた直後に操作ヒントが出ない', (await p.ev('document.querySelector(".hint").classList.contains("show")')) === false);
+      await mv(300); await sleep(200);
+      check('窓の中央でマウスを動かしても出ない', (await uiShown()) === false);
+      await mv(700); await sleep(250);
+      check('下端に近づくと出る', (await uiShown()) === true);
+      await mv(300); await sleep(250);
+      check('下端から離れると消える', (await uiShown()) === false);
+      await press(p, 'h', 'KeyH', 72); await sleep(150);
+      check('Hキーで固定表示', (await uiShown()) === true);
+      await press(p, 'h', 'KeyH', 72); await sleep(150);
+      check('もう一度Hキーで隠れる', (await uiShown()) === false);
+
       for (let i = 0; i < 5; i++) { await p.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 60, y: 60, deltaX: 0, deltaY: -120 }); await sleep(80); }
       await sleep(300);
       const z1 = parseT(await p.ev('document.querySelector(".zoomer").style.transform'));
@@ -137,6 +155,22 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
       await p.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 300, y: 300, deltaX: 0, deltaY: 3000 });
       await sleep(300);
       check('縮小で100%(transform none)に戻る', (await p.ev('document.querySelector(".zoomer").style.transform')) === 'none');
+
+      if (MODE === 'ext' && round === 1 && extId) {
+        // 設定ページで変更 → 開いているPiP窓へ即反映
+        const created = await (await fetch(`http://127.0.0.1:${PORT}/json/new?chrome-extension://${extId}/options.html`, { method: 'PUT' })).json();
+        const op = await conn(created.webSocketDebuggerUrl);
+        await sleep(800);
+        check('設定ページの既定値が表示される(edge)', (await op.ev('document.querySelector("input[name=uiMode]:checked").value')) === 'edge');
+        await op.ev('chrome.storage.sync.set({settings:{uiMode:"always",buttons:{mute:false,time:false}}})');
+        await sleep(500);
+        check('設定「常に表示」が開いているPiP窓へ反映', (await uiShown()) === true);
+        check('設定でミュート/時間ボタンが非表示になる', (await p.ev('(()=>{const b=[...document.querySelectorAll(".ui button")].find(x=>x.title.startsWith("ミュート"));return b.hidden&&document.querySelector(".time").hidden&&!document.querySelector(".zoom").hidden})()')) === true);
+        await op.ev('chrome.storage.sync.remove("settings")');
+        await sleep(500);
+        check('設定を既定に戻すと再び隠れ、ボタンも戻る', (await uiShown()) === false && (await p.ev('!document.querySelector(".time").hidden')) === true);
+        await fetch(`http://127.0.0.1:${PORT}/json/close/${created.id}`);
+      }
 
       if (round === 1) {
         await Promise.race([p.send('Page.bringToFront'), sleep(1000)]);

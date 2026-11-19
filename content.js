@@ -54,6 +54,24 @@
 
   const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 
+  // ---------- 設定（options ページで変更。chrome.storage.sync） ----------
+  const DEFAULTS = VIDEODOCK_DEFAULTS;
+  let settings = { ...DEFAULTS, buttons: { ...DEFAULTS.buttons } };
+  function mergeSettings(saved) {
+    const s = saved || {};
+    settings = { ...DEFAULTS, ...s, buttons: { ...DEFAULTS.buttons, ...(s.buttons || {}) } };
+  }
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
+      chrome.storage.sync.get('settings').then((r) => mergeSettings(r.settings)).catch(() => {});
+      chrome.storage.onChanged.addListener((ch, area) => {
+        if (area !== 'sync' || !ch.settings) return;
+        mergeSettings(ch.settings.newValue);
+        if (pip && pip.applySettings) pip.applySettings();
+      });
+    }
+  } catch (_) {}
+
   // ---------- インラインstyleの保存・復元（最大化用） ----------
   const savedStyles = new WeakMap();
   function setImp(el, props) {
@@ -303,6 +321,7 @@
       .hint{position:fixed;top:8px;left:8px;padding:4px 8px;border-radius:6px;background:rgba(0,0,0,.6);
         opacity:0;transition:opacity .2s;pointer-events:none}
       .hint.show{opacity:1}
+      [hidden]{display:none!important}
     `;
 
   // PiPウィンドウ内のUIとズーム/パン。<video>の移動は同期的に行うこと（awaitを挟むとpauseされる）。<video>を移し、閉じたら元へ戻す。
@@ -339,11 +358,9 @@
     const btnZoom = mk('button', { className: 'zoom', textContent: '100%', title: 'ズームをリセット (0)' });
     const btnIn = mk('button', { textContent: '+', title: '拡大 (+ / ホイール)' });
     const btnBack = mk('button', { textContent: '⤴', title: 'タブに戻す' });
-    const ui = mk(
-      'div',
-      { className: 'ui' },
-      btnPlay, seek, time, btnMute, mk('span', { className: 'sep' }), btnOut, btnZoom, btnIn, mk('span', { className: 'sep' }), btnBack
-    );
+    const sepA = mk('span', { className: 'sep' });
+    const sepB = mk('span', { className: 'sep' });
+    const ui = mk('div', { className: 'ui' }, btnPlay, seek, time, btnMute, sepA, btnOut, btnZoom, btnIn, sepB, btnBack);
     doc.body.append(stage, ui, hint);
 
     // --- <video>を移す ---
@@ -545,30 +562,75 @@
         case '0': z.s = 1; applyZoom(); break;
         case 'f': toggleFill(); break;
         case 'm': v.muted = !v.muted; break;
+        case 'h': pinned = !pinned; if (pinned) { ui.classList.add('show'); clearTimeout(hideTimer); } else hideUi(); break;
         default: return;
       }
       e.preventDefault();
     });
 
-    // 操作UIの自動表示/非表示
+    // 操作UIの表示制御（settings.uiMode: edge / move / always / hidden）
     let hideTimer = 0;
     let uiHover = false;
+    let pinned = false; // H キーで固定表示
+    const keepVisible = () => pinned || settings.uiMode === 'always';
     const showUi = () => {
       ui.classList.add('show');
       clearTimeout(hideTimer);
+      if (keepVisible()) return;
       hideTimer = win.setTimeout(() => {
-        if (!uiHover && !v.paused) ui.classList.remove('show');
-      }, 2000);
+        if (!uiHover) ui.classList.remove('show');
+      }, settings.hideDelay);
+    };
+    const hideUi = () => {
+      clearTimeout(hideTimer);
+      if (!uiHover && !keepVisible()) ui.classList.remove('show');
+    };
+    const wantsUi = (e) => {
+      switch (settings.uiMode) {
+        case 'move': return true;
+        case 'edge': return e.clientY >= win.innerHeight - settings.edgeSize;
+        default: return false; // always は常時表示、hidden は出さない
+      }
     };
     ui.addEventListener('pointerenter', () => (uiHover = true));
-    ui.addEventListener('pointerleave', () => (uiHover = false));
-    doc.addEventListener('pointermove', showUi);
+    ui.addEventListener('pointerleave', () => {
+      uiHover = false;
+      showUi(); // 離れた後の隠す時間を数え直す
+      if (!keepVisible() && settings.uiMode !== 'move') hideUi();
+    });
+    doc.addEventListener('pointermove', (e) => {
+      if (wantsUi(e)) showUi();
+      else if (settings.uiMode === 'edge' && ui.classList.contains('show') && !uiHover) hideUi();
+    });
+    doc.documentElement.addEventListener('mouseleave', hideUi);
+
+    // 設定の反映（ボタンの表示/非表示・表示モード）。設定変更時にも呼ばれる
+    function applySettings() {
+      const b = settings.buttons;
+      btnPlay.hidden = !b.play;
+      seek.hidden = !b.seek;
+      time.hidden = !b.time;
+      btnMute.hidden = !b.mute;
+      for (const x of [btnOut, btnZoom, btnIn]) x.hidden = !b.zoom;
+      btnBack.hidden = !b.back;
+      const before = b.play || b.seek || b.time || b.mute;
+      sepA.hidden = !(b.zoom && before);
+      sepB.hidden = !(b.back && (before || b.zoom));
+      if (settings.uiMode === 'always' || pinned) {
+        ui.classList.add('show');
+        clearTimeout(hideTimer);
+      } else if (!uiHover) {
+        ui.classList.remove('show');
+      }
+    }
     sync();
     applyZoom();
-    showUi();
-    hint.textContent = 'ホイール: ズーム / ドラッグ: 移動 / ダブルクリック: 拡大⇔戻す';
-    hint.classList.add('show');
-    win.setTimeout(() => hint.classList.remove('show'), 3500);
+    applySettings();
+    if (settings.showHint) {
+      hint.textContent = 'ホイール: ズーム / ドラッグ: 移動 / ダブルクリック: 拡大⇔戻す / H: 操作バー';
+      hint.classList.add('show');
+      win.setTimeout(() => hint.classList.remove('show'), 3500);
+    }
 
     // --- 閉じたら元へ戻す（pagehideで確実に呼ばれる） ---
     function restore() {
@@ -596,7 +658,7 @@
       restore(); // pagehideが来なくても戻す
     }
     win.addEventListener('pagehide', restore);
-    return { win, v, close };
+    return { win, v, close, applySettings };
   }
 
   // ---------- ツールバーUI ----------
