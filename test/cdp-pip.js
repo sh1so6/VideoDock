@@ -203,6 +203,20 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
         await op.ev('chrome.storage.sync.remove("settings")');
         await sleep(500);
         check('設定を既定に戻すと再び隠れ、ボタンも戻る', (await uiShown()) === false && (await p.ev('!document.querySelector(".time").hidden')) === true);
+        // 操作バーを動画の下に常設
+        await op.ev('chrome.storage.sync.set({settings:{uiMode:"below"}})');
+        await sleep(600);
+        const bl = JSON.parse(await p.ev('JSON.stringify((()=>{const s=document.querySelector(".stage").getBoundingClientRect(),u=document.querySelector(".ui").getBoundingClientRect();return {sb:s.bottom,ut:u.top,ub:u.bottom,h:innerHeight,op:getComputedStyle(document.querySelector(".ui")).opacity}})())'));
+        check('below: 操作バーが動画領域の真下に常時表示(重ならない)', Math.abs(bl.sb - bl.ut) < 1 && Math.abs(bl.ub - bl.h) < 1 && Math.abs(bl.h - bl.sb - 40) < 1 && bl.op === '1', JSON.stringify(bl));
+        await press(p, 'h', 'KeyH', 72);
+        await sleep(400);
+        check('below: Hで操作バーを隠すと動画領域が窓いっぱいに戻る', (await p.ev('Math.abs(document.querySelector(".stage").getBoundingClientRect().bottom-innerHeight)<1&&!document.body.classList.contains("below")')) === true);
+        await press(p, 'h', 'KeyH', 72);
+        await sleep(300);
+        check('below: もう一度Hで再表示', (await p.ev('document.body.classList.contains("below")')) === true);
+        await op.ev('chrome.storage.sync.remove("settings")');
+        await sleep(500);
+        check('below解除で窓いっぱいに戻る', (await p.ev('Math.abs(document.querySelector(".stage").getBoundingClientRect().bottom-innerHeight)<1')) === true);
         // ホイールの入れ替え・反転
         const base = await p.ev('(()=>{const e=document.querySelector("video");e.pause();e.muted=false;e.volume=0.5;e.currentTime=1;return 1})()');
         await op.ev('chrome.storage.sync.set({settings:{wheelSwap:true}})');
@@ -328,9 +342,15 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
         return parseFloat((cs.result.computedStyle.find((x) => x.name === 'opacity') || {}).value);
       };
       check('表示中の不透明度は1', (await opacity()) === 1);
-      await mv(800, 580, 1);
-      const seen = [];
-      for (let i = 0; i < 12; i++) { seen.push(await opacity()); await sleep(25); }
+      // 計測(CDP往復)の遅れでフェードが終わってしまうことがあるので、中間値を捕まえるまで最大4回試す
+      let seen = [];
+      for (let k = 0; k < 4 && !seen.some((o) => o > 0 && o < 1); k++) {
+        await mv(380, 340, 3);
+        await sleep(300);
+        await main.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800, y: 580 });
+        seen = [];
+        for (let i = 0; i < 12; i++) { seen.push(await opacity()); await sleep(10); }
+      }
       check('隠すとき不透明度が段階的に下がる(フェードアウト)', seen.some((o) => o > 0 && o < 1) && seen[seen.length - 1] === 0, JSON.stringify(seen));
       await main.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 380, y: 340 });
       const seen2 = [];

@@ -17,6 +17,7 @@
   const MIN_H = 135;
   const MAX_ZOOM = 8;
   const ZOOM_STEP = 1.25;
+  const BELOW_BAR_H = 40; // PiP窓: 操作バーを動画の下に置くモードの高さ(px)
   const HOTKEY_ACTIVE_MS = 10000;
   const MSG = '__videodock__';
   const SUPPORTS_POPOVER = typeof HTMLElement.prototype.showPopover === 'function';
@@ -314,7 +315,7 @@
     const width = clamp(Math.round(g ? g.width : 480), 360, 960);
     const vw = (isImg ? v.naturalWidth : v.videoWidth) || 16;
     const vh = (isImg ? v.naturalHeight : v.videoHeight) || 9;
-    const height = clamp(Math.round((width * vh) / vw), 200, 720);
+    const height = clamp(Math.round((width * vh) / vw), 200, 720) + (settings.uiMode === 'below' ? BELOW_BAR_H : 0);
     let win;
     try {
       win = await window.documentPictureInPicture.requestWindow({ width, height });
@@ -343,6 +344,9 @@
         padding:22px 8px 6px;background:linear-gradient(transparent,rgba(0,0,0,.8));
         opacity:0;transition:opacity .2s;pointer-events:none}
       .ui.show{opacity:1;pointer-events:auto}
+      /* 動画の下に常設するモード: 動画の表示領域(.stage)を操作バーの分だけ縮め、重ならないようにする */
+      body.below .stage{bottom:${BELOW_BAR_H}px}
+      body.below .ui{height:${BELOW_BAR_H}px;box-sizing:border-box;padding:0 8px;background:#15151a;opacity:1;pointer-events:auto;transition:none}
       button{all:unset;box-sizing:border-box;min-width:28px;height:28px;display:grid;place-items:center;
         border-radius:6px;cursor:pointer;font-size:14px;color:#fff}
       button:hover{background:rgba(255,255,255,.2)}
@@ -543,6 +547,10 @@
       v.addEventListener('resize', onVideoSize);
     }
     win.addEventListener('resize', onVideoSize);
+    // 操作バーを動画の下に出し入れして表示領域の大きさが変わったときも、ズームの範囲を計算し直す
+    try {
+      new win.ResizeObserver(onVideoSize).observe(stage);
+    } catch (_) {}
 
     const togglePlay = () => {
       if (isImg) return;
@@ -605,7 +613,8 @@
           showOsd(`🔍 ${Math.round(z.s * 100)}%`);
           return;
         }
-        const h = win.innerHeight;
+        const h = stage.clientHeight; // 動画の下の操作バーは音量・シークの範囲に含めない
+        if (e.clientY > h) return;
         const zone = h * (settings.wheelZone / 100);
         const inTop = e.clientY <= zone;
         const inBottom = e.clientY >= h - zone;
@@ -673,16 +682,17 @@
         case '0': z.s = 1; applyZoom(); break;
         case 'f': toggleFill(); break;
         case 'm': if (isImg) return; v.muted = !v.muted; break;
-        case 'h': pinned = !pinned; if (pinned) { ui.classList.add('show'); clearTimeout(hideTimer); } else hideUi(); break;
+        case 'h': if (settings.uiMode === 'below') { belowHidden = !belowHidden; applySettings(); break; } pinned = !pinned; if (pinned) { ui.classList.add('show'); clearTimeout(hideTimer); } else hideUi(); break;
         default: return;
       }
       e.preventDefault();
     });
 
-    // 操作UIの表示制御（settings.uiMode: edge / move / always / hidden）
+    // 操作UIの表示制御（settings.uiMode: edge / move / always / below / hidden）
     let hideTimer = 0;
     let uiHover = false;
     let pinned = false; // H キーで固定表示
+    let belowHidden = false; // below モードで H キーにより操作バーを隠している間 true
     const keepVisible = () => pinned || settings.uiMode === 'always';
     const showUi = () => {
       ui.classList.add('show');
@@ -727,7 +737,10 @@
       const before = b.play || b.seek || b.time || b.mute;
       sepA.hidden = !(b.zoom && before);
       sepB.hidden = !(b.back && (before || b.zoom));
-      if (settings.uiMode === 'always' || pinned) {
+      doc.body.classList.toggle('below', settings.uiMode === 'below' && !belowHidden);
+      if (settings.uiMode === 'below') {
+        ui.classList.remove('show'); // 表示は body.below のCSSで常時
+      } else if (settings.uiMode === 'always' || pinned) {
         ui.classList.add('show');
         clearTimeout(hideTimer);
       } else if (!uiHover) {

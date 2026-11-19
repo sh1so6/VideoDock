@@ -34,7 +34,7 @@
     document.querySelectorAll('[data-btn]').forEach((c) => (c.checked = !!s.buttons[c.dataset.btn]));
     const edge = s.uiMode === 'edge';
     $('#edgeSize').disabled = !edge;
-    $('#hideDelay').disabled = s.uiMode === 'always' || s.uiMode === 'hidden';
+    $('#hideDelay').disabled = s.uiMode === 'always' || s.uiMode === 'hidden' || s.uiMode === 'below';
   }
 
   function read() {

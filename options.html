@@ -26,7 +26,8 @@
   <legend>PiPウィンドウの操作バーの出し方</legend>
   <label><input type="radio" name="uiMode" value="edge"> 下端に近づいたときだけ表示 <span class="sub">（既定）</span></label>
   <label><input type="radio" name="uiMode" value="move"> マウスを動かすたびに表示</label>
-  <label><input type="radio" name="uiMode" value="always"> 常に表示</label>
+  <label><input type="radio" name="uiMode" value="always"> 常に表示（動画に重ねる）</label>
+  <label><input type="radio" name="uiMode" value="below"> 動画の下に常設 <span class="sub">動画に重ならず、動画の表示領域がバーの分(40px)だけ縮みます。PiP窓で <kbd>H</kbd> キーを押すと出し入れできます</span></label>
   <label><input type="radio" name="uiMode" value="hidden"> 表示しない <span class="sub">PiP窓で <kbd>H</kbd> キーを押すと出し入れできます</span></label>
   <div class="row">下端の反応範囲 <input type="number" id="edgeSize" min="16" max="300" step="4"> px</div>
   <div class="row">操作が止まってから隠すまで <input type="number" id="hideDelay" min="200" max="10000" step="100"> ms</div>

@@ -4,7 +4,8 @@ const VIDEODOCK_DEFAULTS = {
   // PiP窓の操作バーの出し方:
   //   edge   = 窓の下端に近づいたときだけ（既定）
   //   move   = マウスを動かすたび
-  //   always = 常に表示
+  //   always = 常に表示（動画に重ねる）
+  //   below  = 動画の下に常設（動画に重ならない。H キーで出し入れ）
   //   hidden = 出さない（H キーで出し入れ）
   uiMode: 'edge',
   edgeSize: 56, // edgeモード: 下端から何pxで反応するか
