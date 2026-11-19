@@ -784,7 +784,11 @@
   };
   const CSS = `
     .wrap{position:fixed;left:0;top:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;
-      font:12px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif;color:#fff;pointer-events:none;visibility:hidden}
+      font:12px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif;color:#fff;pointer-events:none;
+      opacity:0;visibility:hidden;transition:opacity .18s ease,visibility 0s linear .18s}
+    .wrap.on{opacity:1;visibility:visible;transition:opacity .18s ease,visibility 0s}
+    .wrap:not(.on) .bar{pointer-events:none}
+    @media (prefers-reduced-motion:reduce){.wrap,.wrap.on{transition:none}}
     .bar{display:flex;align-items:center;gap:2px;padding:4px;border-radius:10px;
       background:rgba(20,20,26,.82);backdrop-filter:blur(8px);box-shadow:0 2px 12px rgba(0,0,0,.45);
       pointer-events:auto;user-select:none}
@@ -806,6 +810,8 @@
   let toastEl = null;
   let toastTimer = 0;
   let barVisible = false;
+  let hostHideTimer = 0;
+  const FADE_MS = 180;
   let tickId = 0;
 
   function ensureToolbar() {
@@ -901,8 +907,10 @@
     active = v;
     if (!barVisible) {
       barVisible = true;
+      clearTimeout(hostHideTimer);
       showToolbarHost();
-      wrap.style.visibility = 'visible';
+      void wrap.offsetWidth; // 非表示(opacity:0)の状態を確定させてから .on を付け、フェードインさせる
+      wrap.classList.add('on');
     }
     refreshBar();
     place(v);
@@ -913,12 +921,14 @@
     if (!barVisible) return;
     barVisible = false;
     toolbarHover = false;
-    if (wrap) wrap.style.visibility = 'hidden';
-    if (host && SUPPORTS_POPOVER) {
+    if (wrap) wrap.classList.remove('on'); // フェードアウト（0.18秒）
+    clearTimeout(hostHideTimer);
+    hostHideTimer = setTimeout(() => {
+      if (barVisible || !host || !SUPPORTS_POPOVER) return;
       try {
         host.hidePopover();
       } catch (_) {}
-    }
+    }, FADE_MS + 40);
   }
 
   // ボタンの表示位置(settings.barPos)。bw/bh はバーの大きさ

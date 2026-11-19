@@ -313,6 +313,29 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
       check('右上には表示されない', (await hit(700 - 10 - 15, 160 + 10 + 15)) === false);
       await sleep(3200);
       check('表示時間0: 領域内にいる間は隠れない', (await hit(60 + 10 + 15, 520 - 10 - 15)) === true);
+      // フェード確認: closedなShadow Rootは DOM.getDocument(pierce) 経由で .wrap の算出opacityを読む
+      await main.send('DOM.enable'); await main.send('CSS.enable');
+      const opacity = async () => {
+        const d = await main.send('DOM.getDocument', { depth: -1, pierce: true });
+        const q = await main.send('DOM.querySelectorAll', { nodeId: d.result.root.nodeId, selector: '[data-videodock]' });
+        const host = (q.result.nodeIds || [])[0];
+        if (!host) return null;
+        const n = await main.send('DOM.describeNode', { nodeId: host, depth: -1, pierce: true });
+        const sr = (n.result.node.shadowRoots || [])[0];
+        const wrapNode = sr && sr.children.find((c) => c.nodeName === 'DIV');
+        if (!wrapNode) return null;
+        const cs = await main.send('CSS.getComputedStyleForNode', { nodeId: (await main.send('DOM.requestNode', { objectId: (await main.send('DOM.resolveNode', { backendNodeId: wrapNode.backendNodeId })).result.object.objectId })).result.nodeId });
+        return parseFloat((cs.result.computedStyle.find((x) => x.name === 'opacity') || {}).value);
+      };
+      check('表示中の不透明度は1', (await opacity()) === 1);
+      await mv(800, 580, 1);
+      const seen = [];
+      for (let i = 0; i < 12; i++) { seen.push(await opacity()); await sleep(25); }
+      check('隠すとき不透明度が段階的に下がる(フェードアウト)', seen.some((o) => o > 0 && o < 1) && seen[seen.length - 1] === 0, JSON.stringify(seen));
+      await main.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 380, y: 340 });
+      const seen2 = [];
+      for (let i = 0; i < 14; i++) { seen2.push(await opacity()); await sleep(20); }
+      check('表示するとき不透明度が段階的に上がる(フェードイン)', seen2.some((o) => o > 0 && o < 1) && seen2[seen2.length - 1] === 1, JSON.stringify(seen2));
       await mv(800, 580, 3);
       await sleep(500);
       check('領域から出ると隠れる', (await hit(60 + 10 + 15, 520 - 10 - 15)) === false);
