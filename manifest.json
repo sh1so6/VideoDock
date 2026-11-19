@@ -1,10 +1,12 @@
 {
   "manifest_version": 3,
   "name": "VideoDock",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "動画の上にPiP・ズーム・ウィンドウ内最大化ボタンを埋め込みます。",
   "minimum_chrome_version": "114",
   "permissions": ["storage"],
+  "action": { "default_title": "VideoDock の設定を開く" },
+  "background": { "service_worker": "background.js" },
   "options_ui": { "page": "options.html", "open_in_tab": true },
   "icons": {
     "16": "icons/icon16.png",

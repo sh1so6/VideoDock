@@ -286,6 +286,71 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
     await press(main, 'Escape', 'Escape', 27);
     await sleep(500);
     check('Escで最大表示が解除され元のstyleに戻る', (await main.ev('document.getElementById("v").hasAttribute("popover")')) === false && (await main.ev(VSTATE)) === before);
+
+    if (MODE === 'ext' && extId) {
+      // --- ボタンの表示位置/トリガー/表示時間、画像トリガーのキー、拡張ボタン(background) ---
+      console.log('--- ボタン設定 ---');
+      const created = await (await fetch(`http://127.0.0.1:${PORT}/json/new?chrome-extension://${extId}/options.html`, { method: 'PUT' })).json();
+      const op = await conn(created.webSocketDebuggerUrl);
+      await sleep(800);
+      const setS = async (o) => { await op.ev(`chrome.storage.sync.set({settings:${JSON.stringify(o)}})`); await sleep(500); };
+      const hit = (x, y) => main.ev(`(()=>{const e=document.elementFromPoint(${x},${y});return !!e&&e.hasAttribute("data-videodock")})()`);
+      const mv = async (x, y, n = 4) => { for (let i = 0; i < n; i++) { await main.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x + (i % 2), y }); await sleep(150); } };
+      check('設定ページの既定値(右上/領域/キーAlt)', (await op.ev('[document.getElementById("barPos").value,document.querySelector("input[name=barTrigger]:checked").value,document.querySelector("input[name=imageMode]:checked").value,document.getElementById("imageKeyBox").value].join()')) === 'top-right,area,key,Alt');
+      await op.send('Page.bringToFront');
+      await op.ev('document.getElementById("imageKeyBox").focus()');
+      await key(op, 'rawKeyDown', 'q', 'KeyQ', 81);
+      await key(op, 'keyUp', 'q', 'KeyQ', 81);
+      await sleep(500);
+      check('設定ページでキーを押すとトリガーキーに登録される(Q)', (await op.ev('document.getElementById("imageKeyBox").value')) === 'Q' && (await op.ev('chrome.storage.sync.get("settings").then(r=>r.settings.imageKey)')) === 'KeyQ');
+      await op.ev('chrome.storage.sync.remove("settings")');
+      await sleep(400);
+      await main.send('Page.bringToFront');
+      // 映像の描画領域は x:60..700, y:160..520（レターボックスを除く）
+      await setS({ barPos: 'bottom-left', barHideMs: 0 });
+      await mv(380, 340, 6);
+      check('左下に表示される', (await hit(60 + 10 + 15, 520 - 10 - 15)) === true);
+      check('右上には表示されない', (await hit(700 - 10 - 15, 160 + 10 + 15)) === false);
+      await sleep(3200);
+      check('表示時間0: 領域内にいる間は隠れない', (await hit(60 + 10 + 15, 520 - 10 - 15)) === true);
+      await mv(800, 580, 3);
+      await sleep(500);
+      check('領域から出ると隠れる', (await hit(60 + 10 + 15, 520 - 10 - 15)) === false);
+
+      await setS({ barPos: 'top-right', barTrigger: 'near', barNear: 40, barHideMs: 700 });
+      await mv(380, 340, 5);
+      await sleep(300);
+      check('近く判定: 領域に入っただけでは出ない', (await hit(700 - 10 - 15, 160 + 10 + 15)) === false);
+      await mv(680, 200, 5);
+      check('近く判定: ボタンの近くへ行くと出る', (await hit(700 - 10 - 15, 160 + 10 + 15)) === true);
+      await mv(380, 340, 3);
+      await sleep(1300);
+      check('表示時間(700ms)後に隠れる', (await hit(700 - 10 - 15, 160 + 10 + 15)) === false);
+
+      // 画像: キーを Z に変更 → Zを押している間だけ出る
+      await setS({ imageMode: 'key', imageKey: 'KeyZ' });
+      const ir = JSON.parse(await main.ev('JSON.stringify(document.getElementById("im").getBoundingClientRect())'));
+      const ix = Math.round(ir.right - 25), iy = Math.round(ir.top + 25);
+      await mv(Math.round(ir.left + 40), Math.round(ir.top + 50), 6);
+      await sleep(300);
+      check('画像: キー(Z)を押していないと出ない', (await hit(ix, iy)) === false);
+      await key(main, 'rawKeyDown', 'z', 'KeyZ', 90);
+      await sleep(400);
+      check('画像: キー(Z)を押すと出る', (await hit(ix, iy)) === true);
+      await key(main, 'keyUp', 'z', 'KeyZ', 90);
+      await sleep(3300);
+      await setS({ imageMode: 'always', barHideMs: 2500 });
+      await mv(Math.round(ir.left + 40), Math.round(ir.top + 50), 6);
+      await sleep(300);
+      check('画像: キー不要モードではホバーだけで出る', (await hit(ix, iy)) === true);
+      await setS({ imageMode: 'off' });
+      await sleep(3300);
+      await mv(Math.round(ir.left + 30), Math.round(ir.top + 40), 6);
+      check('画像: オフでは出ない', (await hit(ix, iy)) === false);
+      await op.ev('chrome.storage.sync.remove("settings")');
+
+      check('拡張ボタン(action)とbackgroundが定義されている', (await op.ev('(()=>{const m=chrome.runtime.getManifest();return m.background.service_worker==="background.js"&&!!m.action&&!m.action.default_popup})()')) === true);
+    }
   } catch (e) {
     console.log('ERR', e);
     failed++;

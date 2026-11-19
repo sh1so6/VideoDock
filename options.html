@@ -12,6 +12,7 @@
   label { display: block; padding: 3px 0; }
   .sub { opacity: .7; font-size: 12px; margin-left: 22px; }
   input[type=number] { width: 80px; }
+  input[type=text] { width: 150px; }
   .row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
   button { padding: 6px 14px; }
@@ -45,12 +46,36 @@
 </fieldset>
 
 <fieldset>
+  <legend>ページ内のボタン（PiP・最大表示）</legend>
+  <div class="row">表示位置
+    <select id="barPos">
+      <option value="top-right">動画・画像の右上（既定）</option>
+      <option value="top-center">上・中央</option>
+      <option value="top-left">左上</option>
+      <option value="bottom-right">右下</option>
+      <option value="bottom-center">下・中央</option>
+      <option value="bottom-left">左下</option>
+    </select>
+  </div>
+  <label><input type="radio" name="barTrigger" value="area"> 動画・画像の領域にカーソルが入ったら表示 <span class="sub">（既定）</span></label>
+  <label><input type="radio" name="barTrigger" value="near"> ボタンの位置の近くにカーソルが来たら表示</label>
+  <div class="row" style="margin-left:22px">「近く」の範囲 <input type="number" id="barNear" min="10" max="500" step="10"> px（ボタンの縁から）</div>
+  <div class="row">操作が止まってから隠すまで <input type="number" id="barHideMs" min="0" max="30000" step="100"> ms
+    <span class="sub" style="margin-left:0">0 = 領域内にいる間は隠さない</span></div>
+</fieldset>
+
+<fieldset>
   <legend>画像のPiP（ズーム・移動つきの別ウィンドウ）</legend>
-  <label><input type="radio" name="imageMode" value="alt"> <kbd>Alt</kbd> を押しながら画像にマウスを乗せたときだけ表示 <span class="sub">（既定）。<kbd>Alt</kbd>+<kbd>P</kbd> でも開けます</span></label>
-  <label><input type="radio" name="imageMode" value="hover"> 画像にマウスを乗せるたびに表示</label>
+  <label><input type="radio" name="imageMode" value="key"> 指定したキーを押しながら画像にマウスを乗せたときだけ表示 <span class="sub">（既定）</span></label>
+  <div class="row" style="margin-left:22px">キー
+    <input type="text" id="imageKeyBox" readonly size="14" placeholder="クリックしてキーを押す">
+    <button type="button" id="imageKeyAlt">Alt に戻す</button>
+  </div>
+  <div class="sub">Alt / Ctrl / Shift / Win だけでなく、<kbd>Z</kbd> など任意のキーも設定できます。上の欄をクリックして、使いたいキーを押してください。</div>
+  <label><input type="radio" name="imageMode" value="always"> キー不要：画像にマウスを乗せるたびに表示</label>
   <label><input type="radio" name="imageMode" value="off"> 画像には使わない</label>
   <div class="row">対象にする画像の最小幅 <input type="number" id="imageMin" min="40" max="800" step="10"> px</div>
-  <div class="sub" style="margin-left:0">画像のPiPでは、ホイール（または右クリック+ホイール）でズーム、ドラッグで移動、ダブルクリックで拡大⇔戻す。最上位のページ内の画像のみ対応します。</div>
+  <div class="sub" style="margin-left:0">どのモードでも、画像の上で <kbd>Alt</kbd>+<kbd>P</kbd> を押せばPiPを開けます。画像のPiPでは、ホイール（または右クリック+ホイール）でズーム、ドラッグで移動、ダブルクリックで拡大⇔戻す。最上位のページ内の画像のみ対応します。</div>
 </fieldset>
 
 <fieldset>

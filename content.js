@@ -17,7 +17,6 @@
   const MIN_H = 135;
   const MAX_ZOOM = 8;
   const ZOOM_STEP = 1.25;
-  const HIDE_MS = 2500;
   const HOTKEY_ACTIVE_MS = 10000;
   const MSG = '__videodock__';
   const SUPPORTS_POPOVER = typeof HTMLElement.prototype.showPopover === 'function';
@@ -45,7 +44,7 @@
   // ---------- 状態 ----------
   const videos = new Set();
   const images = new Set(); // 画像PiP用（imageMode が off 以外のとき対象）
-  let altDown = false;
+  let keyDown = false; // 画像トリガーのキー(settings.imageKey)を押している間 true
   const addedControls = new WeakSet(); // 最大化のために controls を足した video
   const wideEls = new Set(); // 最大化中の video / iframe
   let active = null;
@@ -58,10 +57,9 @@
 
   // ---------- 設定（options ページで変更。chrome.storage.sync） ----------
   const DEFAULTS = VIDEODOCK_DEFAULTS;
-  let settings = { ...DEFAULTS, buttons: { ...DEFAULTS.buttons } };
+  let settings = videodockMerge();
   function mergeSettings(saved) {
-    const s = saved || {};
-    settings = { ...DEFAULTS, ...s, buttons: { ...DEFAULTS.buttons, ...(s.buttons || {}) } };
+    settings = videodockMerge(saved);
   }
   try {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
@@ -173,8 +171,10 @@
     return best;
   }
 
-  // 画像は数が多いので、既定では Alt を押しながらホバーしたときだけ対象にする（settings.imageMode）
-  const imagesAllowed = () => settings.imageMode === 'hover' || (settings.imageMode === 'alt' && altDown);
+  // 画像は数が多いので、既定ではキー(Alt)を押しながらホバーしたときだけ対象にする（settings.imageMode / imageKey）
+  const MODIFIER_KEYS = ['Alt', 'Control', 'Shift', 'Meta'];
+  const isImageKey = (e) => e.key === settings.imageKey || e.code === settings.imageKey;
+  const imagesAllowed = () => settings.imageMode === 'always' || (settings.imageMode === 'key' && keyDown);
   function pickImage(pt) {
     let best = null;
     let bestArea = Infinity;
@@ -921,20 +921,43 @@
     }
   }
 
+  // ボタンの表示位置(settings.barPos)。bw/bh はバーの大きさ
+  let lastBarSize = { w: 84, h: 38 };
+  function barLeftTop(r, bw, bh) {
+    const [vert, horiz] = String(settings.barPos).split('-');
+    const left = horiz === 'left' ? r.left + 10 : horiz === 'center' ? r.left + (r.width - bw) / 2 : r.right - bw - 10;
+    const top = vert === 'bottom' ? r.bottom - bh - 10 : r.top + 10;
+    return {
+      left: clamp(left, 4, Math.max(4, innerWidth - bw - 4)),
+      top: clamp(top, 4, Math.max(4, innerHeight - bh - 4)),
+    };
+  }
   function place(v) {
     const r = geom(v);
     if (!r) return;
     const bw = wrap.offsetWidth;
     const bh = wrap.offsetHeight;
-    const left = clamp(r.right - bw - 10, 4, Math.max(4, innerWidth - bw - 4));
-    const top = clamp(r.top + 10, 4, Math.max(4, innerHeight - bh - 4));
-    wrap.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+    if (bw && bh) lastBarSize = { w: bw, h: bh };
+    const p = barLeftTop(r, bw, bh);
+    wrap.style.transform = `translate(${Math.round(p.left)}px, ${Math.round(p.top)}px)`;
+  }
+  // 「ボタンの近く」判定用: まだ表示されていないボタンの予定位置
+  function barRect(v) {
+    const r = geom(v);
+    if (!r) return null;
+    const p = barLeftTop(r, lastBarSize.w, lastBarSize.h);
+    return { left: p.left, top: p.top, right: p.left + lastBarSize.w, bottom: p.top + lastBarSize.h };
+  }
+  function pointerOver(v) {
+    const r = geom(v);
+    return !!r && lastPt.x >= r.left && lastPt.x <= r.right && lastPt.y >= r.top && lastPt.y <= r.bottom;
   }
 
   function tick() {
     tickId = 0;
     if (!barVisible) return;
-    const idle = performance.now() - lastActivity > HIDE_MS;
+    // barHideMs=0: 時間では隠さず、動画・画像の領域から出たら隠す
+    const idle = settings.barHideMs > 0 ? performance.now() - lastActivity > settings.barHideMs : !!active && !pointerOver(active);
     if (!active || !isCandidate(active) || document.fullscreenElement || (idle && !toolbarHover)) {
       hideToolbar();
       return;
@@ -949,7 +972,7 @@
     'pointermove',
     (e) => {
       lastPt = { x: e.clientX, y: e.clientY };
-      altDown = e.altKey;
+      if (settings.imageMode === 'key' && MODIFIER_KEYS.includes(settings.imageKey)) keyDown = e.getModifierState(settings.imageKey);
       if (!moveRaf) moveRaf = requestAnimationFrame(onMove);
     },
     { capture: true, passive: true }
@@ -959,6 +982,12 @@
     if (document.fullscreenElement) return;
     const v = pickTarget(lastPt);
     if (!v) return;
+    if (settings.barTrigger === 'near' && !toolbarHover) {
+      // ボタンの予定位置の近くにカーソルが来たときだけ出す
+      const b = barRect(v);
+      const d = settings.barNear;
+      if (!b || lastPt.x < b.left - d || lastPt.x > b.right + d || lastPt.y < b.top - d || lastPt.y > b.bottom + d) return;
+    }
     lastActivity = performance.now();
     if (v !== active || !barVisible) showToolbar(v);
   }
@@ -967,10 +996,14 @@
   window.addEventListener(
     'keydown',
     (e) => {
-      if (e.key === 'Alt') {
-        // Altを押した瞬間に、いまポインタの下にある画像を対象にする（動かさなくても出せる）
-        altDown = true;
-        if (!moveRaf) moveRaf = requestAnimationFrame(onMove);
+      if (settings.imageMode === 'key' && isImageKey(e)) {
+        const t = e.composedPath()[0];
+        const typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+        if (!typing || MODIFIER_KEYS.includes(settings.imageKey)) {
+          // キーを押した瞬間に、いまポインタの下にある画像を対象にする（動かさなくても出せる）
+          keyDown = true;
+          if (!moveRaf) moveRaf = requestAnimationFrame(onMove);
+        }
       }
       if (e.key === 'Escape' && wideEls.size) {
         exitAllWide('user');
@@ -984,8 +1017,9 @@
         pip.close();
         return;
       }
+      // ポインタの下の動画・画像を優先し、無ければ直近に操作した対象
       const recent = performance.now() - lastActivity < HOTKEY_ACTIVE_MS || wideEls.size;
-      const v = active && active.isConnected && recent ? active : null;
+      const v = pickVideo(lastPt) || (settings.imageMode !== 'off' ? pickImage(lastPt) : null) || (active && active.isConnected && recent ? active : null);
       if (!v) return;
       const act = e.code === 'KeyP' ? 'pip' : e.code === 'KeyW' ? 'wide' : null;
       if (!act) return;
@@ -998,9 +1032,9 @@
   );
 
   window.addEventListener('keyup', (e) => {
-    if (e.key === 'Alt') altDown = false;
+    if (isImageKey(e)) keyDown = false;
   }, true);
-  window.addEventListener('blur', () => (altDown = false));
+  window.addEventListener('blur', () => (keyDown = false));
 
   for (const t of ['enterpictureinpicture', 'leavepictureinpicture']) {
     document.addEventListener(t, refreshBar, true);

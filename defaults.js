@@ -20,10 +20,28 @@ const VIDEODOCK_DEFAULTS = {
   volumeStep: 5, // ホイール1ノッチあたりの音量(%)
   seekStep: 5, // ホイール1ノッチあたりのシーク(秒)
   // 画像のPiP（ズーム・移動つきの別ウィンドウ）:
-  //   alt   = Alt を押しながら画像にマウスを乗せたときだけボタンを出す（既定）。Alt+P でも開ける
-  //   hover = 動画と同じく、画像にマウスを乗せるたびに出す
-  //   off   = 画像には使わない
-  imageMode: 'alt',
+  //   key    = imageKey のキーを押しながら画像にマウスを乗せたときだけボタンを出す（既定: Alt）
+  //   always = 動画と同じく、画像にマウスを乗せるたびに出す（キー不要）
+  //   off    = 画像には使わない
+  // どのモードでも、画像の上で Alt+P を押せばPiPを開ける。
+  imageMode: 'key',
+  imageKey: 'Alt', // Alt / Control / Shift / Meta は e.key、それ以外のキーは e.code（例: KeyZ）
   imageMin: 120, // これより小さい画像(幅px)は対象外。高さは幅の0.6倍まで許容
+  // ページ内の動画・画像に出すボタン（PiP・最大表示）:
+  barPos: 'top-right', // top|bottom - left|center|right
+  barTrigger: 'area', // area = 動画・画像の領域に入ったら / near = ボタンの位置の近くにカーソルが来たら
+  barNear: 90, // near: ボタンからこのpx以内に来たら表示
+  barHideMs: 2500, // 操作が止まってから隠すまで(ms)。0 = 領域内にいる間は隠さない
   buttons: { play: true, seek: true, time: true, mute: true, zoom: true, back: true },
 };
+
+// 保存済み設定と既定値を合わせる（旧バージョンの imageMode: alt/hover を移行する）
+// eslint-disable-next-line no-unused-vars
+function videodockMerge(saved) {
+  const s = { ...(saved || {}) };
+  if (s.imageMode === 'alt') {
+    s.imageMode = 'key';
+    if (!s.imageKey) s.imageKey = 'Alt';
+  } else if (s.imageMode === 'hover') s.imageMode = 'always';
+  return { ...VIDEODOCK_DEFAULTS, ...s, buttons: { ...VIDEODOCK_DEFAULTS.buttons, ...(s.buttons || {}) } };
+}

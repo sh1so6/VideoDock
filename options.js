@@ -5,7 +5,9 @@
   const status = $('#status');
   let timer = 0;
 
-  const merge = (saved) => ({ ...D, ...(saved || {}), buttons: { ...D.buttons, ...((saved && saved.buttons) || {}) } });
+  const merge = videodockMerge;
+  let imageKey = D.imageKey;
+  const keyLabel = (k) => ({ Control: 'Ctrl', Meta: 'Win/Cmd', ' ': 'Space' }[k] || k.replace(/^Key/, '').replace(/^Digit/, ''));
 
   function render(s) {
     document.querySelectorAll('input[name=uiMode]').forEach((r) => (r.checked = r.value === s.uiMode));
@@ -14,6 +16,15 @@
     $('#showHint').checked = s.showHint;
     document.querySelectorAll('input[name=imageMode]').forEach((r) => (r.checked = r.value === s.imageMode));
     $('#imageMin').value = s.imageMin;
+    imageKey = s.imageKey;
+    $('#imageKeyBox').value = keyLabel(s.imageKey);
+    $('#imageKeyBox').disabled = s.imageMode !== 'key';
+    $('#imageKeyAlt').disabled = s.imageMode !== 'key';
+    $('#barPos').value = s.barPos;
+    document.querySelectorAll('input[name=barTrigger]').forEach((r) => (r.checked = r.value === s.barTrigger));
+    $('#barNear').value = s.barNear;
+    $('#barNear').disabled = s.barTrigger !== 'near';
+    $('#barHideMs').value = s.barHideMs;
     document.querySelectorAll('input[name=wheelSwap]').forEach((r) => (r.checked = r.value === (s.wheelSwap ? '1' : '0')));
     $('#wheelZone').value = s.wheelZone;
     $('#wheelInvert').checked = s.wheelInvert;
@@ -41,6 +52,11 @@
       showHint: $('#showHint').checked,
       imageMode: (document.querySelector('input[name=imageMode]:checked') || {}).value || D.imageMode,
       imageMin: num('#imageMin', D.imageMin, 40, 800),
+      imageKey,
+      barPos: $('#barPos').value || D.barPos,
+      barTrigger: (document.querySelector('input[name=barTrigger]:checked') || {}).value || D.barTrigger,
+      barNear: num('#barNear', D.barNear, 10, 500),
+      barHideMs: num('#barHideMs', D.barHideMs, 0, 30000),
       wheelSwap: (document.querySelector('input[name=wheelSwap]:checked') || {}).value === '1',
       wheelZone: num('#wheelZone', D.wheelZone, 10, 45),
       wheelInvert: $('#wheelInvert').checked,
@@ -59,6 +75,22 @@
   }
 
   document.addEventListener('change', () => {
+    const s = read();
+    render(s);
+    save(s);
+  });
+  // 画像トリガーのキー設定: 欄にフォーカスして押したキーを登録（Esc/Tabで取り消し）
+  $('#imageKeyBox').addEventListener('keydown', (e) => {
+    e.preventDefault();
+    if (e.key === 'Escape' || e.key === 'Tab') return $('#imageKeyBox').blur();
+    imageKey = ['Alt', 'Control', 'Shift', 'Meta'].includes(e.key) ? e.key : e.code;
+    $('#imageKeyBox').blur();
+    const s = read();
+    render(s);
+    save(s);
+  });
+  $('#imageKeyAlt').addEventListener('click', () => {
+    imageKey = 'Alt';
     const s = read();
     render(s);
     save(s);
