@@ -44,6 +44,8 @@
 
   // ---------- 状態 ----------
   const videos = new Set();
+  const images = new Set(); // 画像PiP用（imageMode が off 以外のとき対象）
+  let altDown = false;
   const addedControls = new WeakSet(); // 最大化のために controls を足した video
   const wideEls = new Set(); // 最大化中の video / iframe
   let active = null;
@@ -112,8 +114,8 @@
     if (!W || !H) return null;
     const r = v.getBoundingClientRect();
     const k = r.width / W || 1;
-    const vw = v.videoWidth;
-    const vh = v.videoHeight;
+    const vw = v.videoWidth || v.naturalWidth;
+    const vh = v.videoHeight || v.naturalHeight;
     let c = { x: 0, y: 0, w: W, h: H };
     if (vw && vh) {
       const cs = getComputedStyle(v);
@@ -140,6 +142,13 @@
 
   function isCandidate(v) {
     if (!v.isConnected || v.ownerDocument !== document) return false;
+    if (v.tagName === 'IMG') {
+      if (!v.complete || !v.naturalWidth) return false;
+      const r = v.getBoundingClientRect();
+      if (r.width < settings.imageMin || r.height < settings.imageMin * 0.6) return false;
+      if (r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth) return false;
+      return getComputedStyle(v).visibility !== 'hidden';
+    }
     if (v.readyState >= 1 && v.videoWidth === 0) return false; // 音声のみ
     const g = geom(v);
     if (!g || g.width < MIN_W || g.height < MIN_H) return false;
@@ -163,6 +172,26 @@
     }
     return best;
   }
+
+  // 画像は数が多いので、既定では Alt を押しながらホバーしたときだけ対象にする（settings.imageMode）
+  const imagesAllowed = () => settings.imageMode === 'hover' || (settings.imageMode === 'alt' && altDown);
+  function pickImage(pt) {
+    let best = null;
+    let bestArea = Infinity;
+    for (const im of images) {
+      if (!im.isConnected) continue;
+      const r = im.getBoundingClientRect();
+      if (pt.x < r.left || pt.x > r.right || pt.y < r.top || pt.y > r.bottom) continue;
+      if (!isCandidate(im)) continue;
+      const area = r.width * r.height;
+      if (area < bestArea) {
+        best = im;
+        bestArea = area;
+      }
+    }
+    return best;
+  }
+  const pickTarget = (pt) => pickVideo(pt) || (imagesAllowed() ? pickImage(pt) : null);
 
   // ---------- ウィンドウ内最大化（Popover APIでトップレイヤーへ） ----------
   function enterWide(el) {
@@ -273,14 +302,18 @@
       pip.close();
       return;
     }
-    if (document.pictureInPictureElement === v) return stdPip(v);
-    if (!docPipSupported()) return stdPip(v);
+    const isImg = v.tagName === 'IMG';
+    if (!isImg && document.pictureInPictureElement === v) return stdPip(v);
+    if (!docPipSupported()) {
+      if (isImg) return toast('画像のPiPは、最上位のページ内の画像のみ対応です');
+      return stdPip(v);
+    }
     if (wideEls.has(v)) exitWide(v);
 
     const g = geom(v);
     const width = clamp(Math.round(g ? g.width : 480), 360, 960);
-    const vw = v.videoWidth || 16;
-    const vh = v.videoHeight || 9;
+    const vw = (isImg ? v.naturalWidth : v.videoWidth) || 16;
+    const vh = (isImg ? v.naturalHeight : v.videoHeight) || 9;
     const height = clamp(Math.round((width * vh) / vw), 200, 720);
     let win;
     try {
@@ -349,6 +382,8 @@
       doc.head.append(st);
     }
     doc.title = document.title || 'VideoDock';
+    const isImg = v.tagName === 'IMG'; // 画像モード: 元の<img>は動かさず、複製をPiPに表示する
+    const natSize = () => (isImg ? [v.naturalWidth, v.naturalHeight] : [v.videoWidth, v.videoHeight]);
 
     const stage = mk('div', { className: 'stage' });
     const zoomer = mk('div', { className: 'zoomer' }); // ズームはこの専用要素のtransformで行う（サイトのstyle書き換えの影響を受けない）
@@ -368,15 +403,7 @@
     const ui = mk('div', { className: 'ui' }, btnPlay, seek, time, btnMute, sepA, btnOut, btnZoom, btnIn, sepB, btnBack);
     doc.body.append(stage, ui, hint, osd);
 
-    // --- <video>を移す ---
-    const origCss = v.style.cssText;
-    const origControls = v.controls;
-    const origParent = v.parentNode;
-    const origNext = v.nextSibling;
-    const placeholder = document.createComment('videodock-pip');
-    origParent.insertBefore(placeholder, v);
-    const wasPlaying = !v.paused;
-    v.controls = false;
+    // --- <video>を移す（画像の場合は複製を置く） ---
     let restored = false;
     const VIDEO_STYLE = {
       position: 'absolute', left: '0', top: '0', right: 'auto', bottom: 'auto', width: '100%', height: '100%',
@@ -385,37 +412,67 @@
       background: '#000', transform: 'none', 'clip-path': 'none', filter: 'none',
       visibility: 'visible', opacity: '1', display: 'block',
     };
+    let el = v; // PiP内に置く要素
+    let origCss, origControls, origParent, origNext, placeholder, wasPlaying, styleObserver;
     // サイトのプレーヤーが再生/リサイズのたびに<video>のstyleを書き換えても、毎回こちらの値へ戻す
     let enforcing = false;
     function enforceVideoStyle() {
       if (enforcing) return;
       enforcing = true;
       for (const [k, val] of Object.entries(VIDEO_STYLE)) {
-        if (v.style.getPropertyValue(k) !== val || v.style.getPropertyPriority(k) !== 'important') {
-          v.style.setProperty(k, val, 'important');
+        if (el.style.getPropertyValue(k) !== val || el.style.getPropertyPriority(k) !== 'important') {
+          el.style.setProperty(k, val, 'important');
         }
       }
       enforcing = false;
     }
-    enforceVideoStyle();
-    zoomer.append(v);
-    const styleObserver = new MutationObserver(onVideoMutated);
-    function onVideoMutated() {
-      if (restored) return;
-      // サイトが<video>を別の場所へ動かした場合は、PiP窓へ戻す
-      if (v.parentNode !== zoomer) zoomer.append(v);
+    if (isImg) {
+      el = mk('img', { src: v.currentSrc || v.src, alt: v.alt || '', draggable: false });
+      if (v.referrerPolicy) el.referrerPolicy = v.referrerPolicy;
       enforceVideoStyle();
+      zoomer.append(el);
+      // 再取得に失敗した場合(ホットリンク対策など)は、読み込み済みの画像をcanvasへ描いて表示する（静止画）
+      el.addEventListener('error', () => {
+        try {
+          const c = mk('canvas', { width: v.naturalWidth, height: v.naturalHeight });
+          c.getContext('2d').drawImage(v, 0, 0);
+          const old = el;
+          el = c;
+          enforceVideoStyle();
+          old.replaceWith(c);
+        } catch (_) {
+          showOsd('画像を読み込めませんでした');
+        }
+      });
+    } else {
+      origCss = v.style.cssText;
+      origControls = v.controls;
+      origParent = v.parentNode;
+      origNext = v.nextSibling;
+      placeholder = document.createComment('videodock-pip');
+      origParent.insertBefore(placeholder, v);
+      wasPlaying = !v.paused;
+      v.controls = false;
+      enforceVideoStyle();
+      zoomer.append(v);
+      styleObserver = new MutationObserver(() => {
+        if (restored) return;
+        // サイトが<video>を別の場所へ動かした場合は、PiP窓へ戻す
+        if (v.parentNode !== zoomer) zoomer.append(v);
+        enforceVideoStyle();
+      });
+      styleObserver.observe(v, { attributes: true, attributeFilter: ['style', 'class', 'width', 'height'] });
+      styleObserver.observe(zoomer, { childList: true });
+      if (wasPlaying && v.paused) v.play().catch(() => {});
     }
-    styleObserver.observe(v, { attributes: true, attributeFilter: ['style', 'class', 'width', 'height'] });
-    styleObserver.observe(zoomer, { childList: true });
-    if (wasPlaying && v.paused) v.play().catch(() => {});
 
     // --- ズーム/パン ---
     const z = { s: 1, tx: 0, ty: 0 };
     const layout = () => {
       const W = stage.clientWidth;
       const H = stage.clientHeight;
-      return { W, H, c: containRect(v.videoWidth, v.videoHeight, W, H) };
+      const [nw, nh] = natSize();
+      return { W, H, c: containRect(nw, nh, W, H) };
     };
     function applyZoom() {
       const { c } = layout();
@@ -479,15 +536,22 @@
       time.textContent = live ? fmt(v.currentTime) : `${fmt(v.currentTime)} / ${fmt(d)}`;
     }
     const vEvents = ['play', 'pause', 'timeupdate', 'durationchange', 'volumechange', 'ended', 'seeked'];
-    vEvents.forEach((t) => v.addEventListener(t, sync));
     const onVideoSize = () => applyZoom();
-    v.addEventListener('loadedmetadata', onVideoSize);
-    v.addEventListener('resize', onVideoSize);
+    if (!isImg) {
+      vEvents.forEach((t) => v.addEventListener(t, sync));
+      v.addEventListener('loadedmetadata', onVideoSize);
+      v.addEventListener('resize', onVideoSize);
+    }
     win.addEventListener('resize', onVideoSize);
 
-    const togglePlay = () => (v.paused ? v.play().catch(() => {}) : v.pause());
+    const togglePlay = () => {
+      if (isImg) return;
+      return v.paused ? v.play().catch(() => {}) : v.pause();
+    };
     btnPlay.addEventListener('click', togglePlay);
-    btnMute.addEventListener('click', () => (v.muted = !v.muted));
+    btnMute.addEventListener('click', () => {
+      if (!isImg) v.muted = !v.muted;
+    });
     btnOut.addEventListener('click', () => zoomAt(1 / ZOOM_STEP));
     btnIn.addEventListener('click', () => zoomAt(ZOOM_STEP));
     btnZoom.addEventListener('click', () => {
@@ -534,8 +598,8 @@
         e.preventDefault();
         const unit = e.deltaMode === 1 ? e.deltaY / 3 : e.deltaY / 100; // 1ノッチ≒1（トラックパッドは小数）
         if (unit === 0) return;
-        if (e.buttons & 2) {
-          // 右ボタンを押しながら → ズーム（カーソル位置が中心）
+        if (e.buttons & 2 || isImg) {
+          // 右ボタンを押しながら → ズーム（カーソル位置が中心）。画像は音量/シークが無いので通常のホイールでもズーム
           const dir = settings.zoomInvert ? 1 : -1;
           zoomAt(Math.exp(dir * unit * 0.15), e.clientX, e.clientY);
           showOsd(`🔍 ${Math.round(z.s * 100)}%`);
@@ -602,13 +666,13 @@
       if (e.target === seek && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
       switch (e.key) {
         case ' ': case 'k': togglePlay(); break;
-        case 'ArrowLeft': v.currentTime = Math.max(0, v.currentTime - 5); break;
-        case 'ArrowRight': v.currentTime = v.currentTime + 5; break;
+        case 'ArrowLeft': if (isImg) return; v.currentTime = Math.max(0, v.currentTime - 5); break;
+        case 'ArrowRight': if (isImg) return; v.currentTime = v.currentTime + 5; break;
         case '+': case '=': zoomAt(ZOOM_STEP); break;
         case '-': zoomAt(1 / ZOOM_STEP); break;
         case '0': z.s = 1; applyZoom(); break;
         case 'f': toggleFill(); break;
-        case 'm': v.muted = !v.muted; break;
+        case 'm': if (isImg) return; v.muted = !v.muted; break;
         case 'h': pinned = !pinned; if (pinned) { ui.classList.add('show'); clearTimeout(hideTimer); } else hideUi(); break;
         default: return;
       }
@@ -653,7 +717,7 @@
 
     // 設定の反映（ボタンの表示/非表示・表示モード）。設定変更時にも呼ばれる
     function applySettings() {
-      const b = settings.buttons;
+      const b = isImg ? { ...settings.buttons, play: false, seek: false, time: false, mute: false } : settings.buttons;
       btnPlay.hidden = !b.play;
       seek.hidden = !b.seek;
       time.hidden = !b.time;
@@ -670,11 +734,11 @@
         ui.classList.remove('show');
       }
     }
-    sync();
+    if (!isImg) sync();
     applyZoom();
     applySettings();
     if (settings.showHint) {
-      hint.textContent = '右クリック+ホイール: ズーム / 上部ホイール: 音量 / 下部ホイール: シーク / ドラッグ: 移動 / ダブルクリック: 拡大⇔戻す / H: 操作バー';
+      hint.textContent = isImg ? 'ホイール / 右クリック+ホイール: ズーム / ドラッグ: 移動 / ダブルクリック: 拡大⇔戻す / H: 操作バー' : '右クリック+ホイール: ズーム / 上部ホイール: 音量 / 下部ホイール: シーク / ドラッグ: 移動 / ダブルクリック: 拡大⇔戻す / H: 操作バー';
       hint.classList.add('show');
       win.setTimeout(() => hint.classList.remove('show'), 3500);
     }
@@ -683,9 +747,14 @@
     function restore() {
       if (restored) return;
       restored = true;
-      styleObserver.disconnect();
       clearTimeout(clickTimer);
       clearTimeout(hideTimer);
+      if (isImg) {
+        pip = null;
+        refreshBar();
+        return;
+      }
+      styleObserver.disconnect();
       vEvents.forEach((t) => v.removeEventListener(t, sync));
       v.removeEventListener('loadedmetadata', onVideoSize);
       v.removeEventListener('resize', onVideoSize);
@@ -728,6 +797,7 @@
     .sep{width:1px;height:18px;background:rgba(255,255,255,.25);margin:0 3px}
     .toast{padding:6px 10px;border-radius:8px;background:rgba(20,20,26,.9);pointer-events:none;max-width:320px}
     .toast[hidden]{display:none}
+    [hidden]{display:none!important}
   `;
 
   let host = null;
@@ -774,6 +844,7 @@
 
   function runAction(act, v) {
     lastActivity = performance.now();
+    if (v.tagName === 'IMG' && act !== 'pip') return;
     switch (act) {
       case 'pip':
         return togglePip(v);
@@ -819,6 +890,10 @@
     const set = (act, pressed) => bar.querySelector(`[data-act="${act}"]`).setAttribute('aria-pressed', String(pressed));
     set('pip', !!v && (document.pictureInPictureElement === v || (!!pip && pip.v === v)));
     set('wide', !!v && wideEls.has(v));
+    // 画像には「最大表示」を出さない
+    const isImg = !!v && v.tagName === 'IMG';
+    bar.querySelector('[data-act="wide"]').hidden = isImg;
+    bar.querySelector('.sep').hidden = isImg;
   }
 
   function showToolbar(v) {
@@ -874,6 +949,7 @@
     'pointermove',
     (e) => {
       lastPt = { x: e.clientX, y: e.clientY };
+      altDown = e.altKey;
       if (!moveRaf) moveRaf = requestAnimationFrame(onMove);
     },
     { capture: true, passive: true }
@@ -881,7 +957,7 @@
   function onMove() {
     moveRaf = 0;
     if (document.fullscreenElement) return;
-    const v = pickVideo(lastPt);
+    const v = pickTarget(lastPt);
     if (!v) return;
     lastActivity = performance.now();
     if (v !== active || !barVisible) showToolbar(v);
@@ -891,6 +967,11 @@
   window.addEventListener(
     'keydown',
     (e) => {
+      if (e.key === 'Alt') {
+        // Altを押した瞬間に、いまポインタの下にある画像を対象にする（動かさなくても出せる）
+        altDown = true;
+        if (!moveRaf) moveRaf = requestAnimationFrame(onMove);
+      }
       if (e.key === 'Escape' && wideEls.size) {
         exitAllWide('user');
         return;
@@ -916,6 +997,11 @@
     true
   );
 
+  window.addEventListener('keyup', (e) => {
+    if (e.key === 'Alt') altDown = false;
+  }, true);
+  window.addEventListener('blur', () => (altDown = false));
+
   for (const t of ['enterpictureinpicture', 'leavepictureinpicture']) {
     document.addEventListener(t, refreshBar, true);
   }
@@ -926,6 +1012,7 @@
   // ---------- 動画の検出 ----------
   function collect(root) {
     root.querySelectorAll('video').forEach((v) => videos.add(v));
+    if (settings.imageMode !== 'off') root.querySelectorAll('img').forEach((i) => images.add(i));
   }
   function deepCollect(root) {
     collect(root);
@@ -944,6 +1031,16 @@
       }
     }
   }
+  function pruneImages() {
+    for (const i of images) {
+      if (i.isConnected) continue;
+      images.delete(i);
+      if (active === i) {
+        active = null;
+        hideToolbar();
+      }
+    }
+  }
   let scanTimer = 0;
   function scheduleScan() {
     if (scanTimer) return;
@@ -951,6 +1048,7 @@
       scanTimer = 0;
       collect(document);
       prune();
+      pruneImages();
     }, 400);
   }
 
@@ -960,5 +1058,6 @@
     if (document.hidden) return;
     deepCollect(document); // Shadow DOM内の動画も拾う
     prune();
+    pruneImages();
   }, 3000);
 })();

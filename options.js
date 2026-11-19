@@ -12,6 +12,8 @@
     $('#edgeSize').value = s.edgeSize;
     $('#hideDelay').value = s.hideDelay;
     $('#showHint').checked = s.showHint;
+    document.querySelectorAll('input[name=imageMode]').forEach((r) => (r.checked = r.value === s.imageMode));
+    $('#imageMin').value = s.imageMin;
     document.querySelectorAll('input[name=wheelSwap]').forEach((r) => (r.checked = r.value === (s.wheelSwap ? '1' : '0')));
     $('#wheelZone').value = s.wheelZone;
     $('#wheelInvert').checked = s.wheelInvert;
@@ -37,6 +39,8 @@
       edgeSize: num('#edgeSize', D.edgeSize, 16, 300),
       hideDelay: num('#hideDelay', D.hideDelay, 200, 10000),
       showHint: $('#showHint').checked,
+      imageMode: (document.querySelector('input[name=imageMode]:checked') || {}).value || D.imageMode,
+      imageMin: num('#imageMin', D.imageMin, 40, 800),
       wheelSwap: (document.querySelector('input[name=wheelSwap]:checked') || {}).value === '1',
       wheelZone: num('#wheelZone', D.wheelZone, 10, 45),
       wheelInvert: $('#wheelInvert').checked,

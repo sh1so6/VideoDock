@@ -19,5 +19,11 @@ const VIDEODOCK_DEFAULTS = {
   zoomInvert: false, // ズームのホイール向きを反転（既定: 上=拡大）
   volumeStep: 5, // ホイール1ノッチあたりの音量(%)
   seekStep: 5, // ホイール1ノッチあたりのシーク(秒)
+  // 画像のPiP（ズーム・移動つきの別ウィンドウ）:
+  //   alt   = Alt を押しながら画像にマウスを乗せたときだけボタンを出す（既定）。Alt+P でも開ける
+  //   hover = 動画と同じく、画像にマウスを乗せるたびに出す
+  //   off   = 画像には使わない
+  imageMode: 'alt',
+  imageMin: 120, // これより小さい画像(幅px)は対象外。高さは幅の0.6倍まで許容
   buttons: { play: true, seek: true, time: true, mute: true, zoom: true, back: true },
 };

@@ -4,6 +4,8 @@
 <div style="position:absolute;left:60px;top:40px;width:640px;height:600px;background:#000;transform:translateZ(0);overflow:hidden">
   <video id="v" autoplay muted loop style="width:100%;height:100%;object-fit:contain;display:block"></video>
 </div>
+<!-- 画像PiPのテスト用: 画面右上に固定した小さな画像(実体は800x500) -->
+<img id="im" alt="test image" style="position:fixed;right:10px;top:60px;width:170px;height:106px">
 <script>if(location.hash==="#direct"){const a=document.createElement("script");a.src="../defaults.js";a.onload=()=>{const b=document.createElement("script");b.src="../content.js";document.head.append(b)};document.head.append(a)}</script>
 <script>
 const c=document.createElement('canvas');c.width=640;c.height=360;const g=c.getContext('2d');
@@ -11,6 +13,12 @@ const c=document.createElement('canvas');c.width=640;c.height=360;const g=c.getC
 for(let x=0;x<=640;x+=40){g.strokeRect(x,0,1,360)}for(let y=0;y<=360;y+=40){g.strokeRect(0,y,640,1)}
 g.fillStyle='#fc0';g.fillRect(0,0,60,60);g.fillStyle='#f0f';g.fillRect(580,300,60,60);g.fillStyle='#fff';g.font='28px sans-serif';g.fillText('TL                       BR',10,200);requestAnimationFrame(d)})();
 v.srcObject=c.captureStream(30);
+(() => { // 画像: 800x500 のグラデーション+文字をdata URLで
+  const cv = document.createElement('canvas'); cv.width = 800; cv.height = 500;
+  const x = cv.getContext('2d'); const gr = x.createLinearGradient(0, 0, 800, 500); gr.addColorStop(0, '#e11'); gr.addColorStop(1, '#16c');
+  x.fillStyle = gr; x.fillRect(0, 0, 800, 500); x.fillStyle = '#fff'; x.font = '80px sans-serif'; x.fillText('IMG TEST', 200, 270);
+  document.getElementById('im').src = cv.toDataURL('image/png');
+})();
 window.__v=v; // テストから、PiPへ移動後の<video>を触るため
 // シークのテスト用に、canvasを録画して「長さのある動画」(blob)に差し替える。完了で window.__ready = true
 (() => {

@@ -45,6 +45,15 @@
 </fieldset>
 
 <fieldset>
+  <legend>画像のPiP（ズーム・移動つきの別ウィンドウ）</legend>
+  <label><input type="radio" name="imageMode" value="alt"> <kbd>Alt</kbd> を押しながら画像にマウスを乗せたときだけ表示 <span class="sub">（既定）。<kbd>Alt</kbd>+<kbd>P</kbd> でも開けます</span></label>
+  <label><input type="radio" name="imageMode" value="hover"> 画像にマウスを乗せるたびに表示</label>
+  <label><input type="radio" name="imageMode" value="off"> 画像には使わない</label>
+  <div class="row">対象にする画像の最小幅 <input type="number" id="imageMin" min="40" max="800" step="10"> px</div>
+  <div class="sub" style="margin-left:0">画像のPiPでは、ホイール（または右クリック+ホイール）でズーム、ドラッグで移動、ダブルクリックで拡大⇔戻す。最上位のページ内の画像のみ対応します。</div>
+</fieldset>
+
+<fieldset>
   <legend>表示するボタン</legend>
   <div class="grid">
     <label><input type="checkbox" data-btn="play"> 再生 / 一時停止</label>

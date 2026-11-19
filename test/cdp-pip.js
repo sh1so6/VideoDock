@@ -248,6 +248,35 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
       check('戻った後も再生が続いている', (await main.ev('(()=>{const v=document.getElementById("v");return v.ownerDocument===document&&v.isConnected&&!v.paused})()')) === true);
     }
 
+    // --- 画像のPiP: Altを押しながら画像にホバー → Alt+P ---
+    console.log('--- 画像PiP ---');
+    await main.send('Page.bringToFront');
+    await key(main, 'rawKeyDown', 'Alt', 'AltLeft', 18, 1);
+    for (let i = 0; i < 8; i++) { await main.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800 + (i % 2), y: 110, modifiers: 1 }); await sleep(200); }
+    await press(main, 'p', 'KeyP', 80, 1);
+    let ipt;
+    for (let i = 0; i < 10 && !ipt; i++) { await sleep(400); ipt = (await targets()).find((x) => !x.url.includes('pip-test')); }
+    check('Alt+ホバー→Alt+Pで画像のPiP窓が開く', !!ipt);
+    if (ipt) {
+      const ip = await conn(ipt.webSocketDebuggerUrl);
+      await sleep(600);
+      check('PiP窓に<img>が表示され、<video>は無い', (await ip.ev('!!document.querySelector(".zoomer img")&&!document.querySelector(".zoomer video")')) === true);
+      check('画像が読み込まれている', (await ip.ev('document.querySelector(".zoomer img").naturalWidth')) === 800);
+      check('画像モードでは再生/シーク/時間/ミュートのボタンが無い', (await ip.ev('[...document.querySelectorAll(".ui > *")].filter(e=>e.tagName==="BUTTON"||e.tagName==="INPUT"||e.className==="time").slice(0,4).every(e=>e.hidden)')) === true);
+      const cx = Math.round((await ip.ev('innerWidth')) / 2), cy = Math.round((await ip.ev('innerHeight')) / 2);
+      await wheel(ip, cx, cy, -100); await wheel(ip, cx, cy, -100); await sleep(250);
+      const q1 = parseT(await ip.ev('document.querySelector(".zoomer").style.transform'));
+      check('画像は通常のホイールでズームできる', !!q1 && q1.s > 1.2, JSON.stringify(q1));
+      await rwheel(ip, cx, cy, -100, 2); await sleep(250);
+      const q2 = parseT(await ip.ev('document.querySelector(".zoomer").style.transform'));
+      check('右クリック+ホイールでもズームできる', !!q2 && !!q1 && q2.s > q1.s, JSON.stringify(q2));
+      check('元のページの画像はそのまま残っている', (await main.ev('(()=>{const i=document.getElementById("im");return i.isConnected&&i.complete&&i.naturalWidth===800&&!i.hasAttribute("popover")})()')) === true);
+      await Promise.race([press(ip, 'p', 'KeyP', 80, 1), sleep(1500)]);
+      await sleep(1000);
+      check('画像PiPをAlt+Pで閉じられる', (await main.ev('!documentPictureInPicture.window')) === true);
+    }
+    await key(main, 'keyUp', 'Alt', 'AltLeft', 18);
+
     // 最大表示 (Alt+W) → Esc
     await main.send('Page.bringToFront');
     await hover(main, 390);

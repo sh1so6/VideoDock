@@ -10,6 +10,13 @@
 | PiP | 動画を別ウィンドウに移す。**PiPウィンドウ内でズーム/移動できる** | `Alt+P`（PiP中は閉じる） |
 | 最大化 | フルスクリーンではなく、ブラウザのウィンドウ内いっぱいに表示。`Esc` で戻る | `Alt+W` |
 
+### 画像のPiP
+画像も、ズーム・移動つきの別ウィンドウ（常に手前）で出せます。
+- **開き方**: `Alt` を押しながら画像にマウスを乗せるとPiPボタンが出ます（`Alt+P` でも開けます）。設定で「ホバーのたびに出す」「使わない」にも変更可。
+- **操作**: ホイール（または右クリック+ホイール）でズーム、ドラッグで移動、ダブルクリックで拡大⇔戻す、`H` で操作バー、`Alt+P` で閉じる。
+- 元のページの画像は動かさず、複製を表示します（GIF/アニメWebPも動きます）。再取得に失敗した画像（ホットリンク対策など）は読み込み済みの画像を静止画で表示します。
+- 最上位のページ内の `<img>` が対象です（iframe内・CSS背景画像・canvas/SVGは未対応）。120px未満の小さな画像は対象外（設定で変更可）。
+
 ### PiPウィンドウでの操作
 | 操作 | 動作 |
 |---|---|
@@ -44,7 +51,7 @@ PiP窓の操作バーは、ブラウザ標準ではなく VideoDock 独自のUI�
 ## インストール / 動作確認
 1. `chrome://extensions` → デベロッパーモード → 「パッケージ化されていない拡張機能を読み込む」で本フォルダを選択
 2. `test/index.html` / `test/pip-test.html` を開いて確認（ローカルファイルは「ファイルのURLへのアクセスを許可する」をON）
-3. 自動テスト: `node test/cdp-pip.js [ext|direct]`。Chromeを起動し、CDPの本物の入力で `Alt+P`→右クリック+ホイールズーム→上部/下部ホイール(音量/シーク)→ドラッグ→PiP内`Alt+P`/「タブに戻す」で閉じる→style・controlsの完全復元→`Alt+W`/`Esc`、までをassert（失敗時は非ゼロ終了）。`ext`（既定）は `Extensions.loadUnpacked` で拡張機能として読み込み、`direct` は `content.js` をページへ直接読み込む
+3. 自動テスト: `node test/cdp-pip.js [ext|direct]`。Chromeを起動し、CDPの本物の入力で `Alt+P`→右クリック+ホイールズーム→上部/下部ホイール(音量/シーク)→ドラッグ→画像PiP→PiP内`Alt+P`/「タブに戻す」で閉じる→style・controlsの完全復元→`Alt+W`/`Esc`、までをassert（失敗時は非ゼロ終了）。`ext`（既定）は `Extensions.loadUnpacked` で拡張機能として読み込み、`direct` は `content.js` をページへ直接読み込む
 
 ## 開発メモ（git / バージョン）
 - 初回のみ `git config core.hooksPath .githooks` を実行すると、コミットのたびに `manifest.json` の `version`（patch）が自動で +1 されます（`tools/bump-version.js`）。
