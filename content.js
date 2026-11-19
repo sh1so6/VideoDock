@@ -39,7 +39,7 @@
 
   // ---------- 状態 ----------
   const videos = new Set();
-  const states = new WeakMap(); // video -> {s, tx, ty, w, h, addedControls}
+  const states = new WeakMap(); // video -> {s, tx, ty, sig, addedControls}
   const wideEls = new Set(); // 最大化中の video / iframe
   let active = null;
   let lastActivity = 0;
@@ -48,7 +48,7 @@
 
   const stateOf = (v) => {
     let st = states.get(v);
-    if (!st) states.set(v, (st = { s: 1, tx: 0, ty: 0, w: 0, h: 0, addedControls: false }));
+    if (!st) states.set(v, (st = { s: 1, tx: 0, ty: 0, sig: '', addedControls: false }));
     return st;
   };
   const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
@@ -75,24 +75,69 @@
     }
   }
 
-  // ---------- 動画の矩形（ズーム前の見た目の枠） ----------
-  function baseRect(v) {
-    const r = v.getBoundingClientRect();
-    const st = states.get(v);
-    if (!st || st.s <= 1) return r;
-    const width = r.width / st.s;
-    const height = r.height / st.s;
-    const left = r.left - st.tx;
-    const top = r.top - st.ty;
-    return { left, top, width, height, right: left + width, bottom: top + height };
+  // ---------- 動画の矩形（映像が実際に描画されている領域） ----------
+  // object-fit / object-position を考慮し、<video>要素内のレターボックスを除いた領域(ローカルpx)を返す
+  function contentBox(v, W, H) {
+    const vw = v.videoWidth;
+    const vh = v.videoHeight;
+    if (!vw || !vh) return { x: 0, y: 0, w: W, h: H };
+    const cs = getComputedStyle(v);
+    let w, h;
+    switch (cs.objectFit) {
+      case 'fill':
+        w = W; h = H; break;
+      case 'cover': {
+        const k = Math.max(W / vw, H / vh);
+        w = vw * k; h = vh * k; break;
+      }
+      case 'none':
+        w = vw; h = vh; break;
+      case 'scale-down': {
+        const k = Math.min(1, W / vw, H / vh);
+        w = vw * k; h = vh * k; break;
+      }
+      default: {
+        const k = Math.min(W / vw, H / vh);
+        w = vw * k; h = vh * k;
+      }
+    }
+    const pos = (cs.objectPosition || '50% 50%').split(/\s+/);
+    const off = (tok, free) => {
+      if (!tok) return free / 2;
+      const n = parseFloat(tok);
+      if (Number.isNaN(n)) return free / 2;
+      return tok.endsWith('%') ? (free * n) / 100 : n;
+    };
+    return { x: off(pos[0], W - w), y: off(pos[1], H - h), w, h };
   }
+
+  // v の現在の見た目から、ズーム前の枠(bx,by)・ローカルサイズ・映像領域を求める。
+  // ローカル座標系は v 自身の座標（transformのtranslate値と同じ単位）。k は祖先によるローカル→画面の倍率。
+  function geom(v) {
+    const W = v.offsetWidth;
+    const H = v.offsetHeight;
+    if (!W || !H) return null;
+    const st = states.get(v);
+    const s = st ? st.s : 1;
+    const r = v.getBoundingClientRect();
+    const k = r.width / (s * W) || 1;
+    const bx = r.left - k * (st ? st.tx : 0);
+    const by = r.top - k * (st ? st.ty : 0);
+    const c = contentBox(v, W, H);
+    const left = bx + k * c.x;
+    const top = by + k * c.y;
+    const width = k * c.w;
+    const height = k * c.h;
+    return { W, H, k, bx, by, cx: c.x, cy: c.y, cw: c.w, ch: c.h, left, top, width, height, right: left + width, bottom: top + height };
+  }
+  const sigOf = (g) => [g.W, g.H, g.cx, g.cy, g.cw, g.ch, g.k].map((n) => Math.round(n * 10)).join(',');
 
   function isCandidate(v) {
     if (!v.isConnected) return false;
     if (v.readyState >= 1 && v.videoWidth === 0) return false; // 音声のみ
-    const r = baseRect(v);
-    if (r.width < MIN_W || r.height < MIN_H) return false;
-    if (r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) return false;
+    const g = geom(v);
+    if (!g || g.width < MIN_W || g.height < MIN_H) return false;
+    if (g.bottom < 0 || g.right < 0 || g.top > innerHeight || g.left > innerWidth) return false;
     return getComputedStyle(v).visibility !== 'hidden';
   }
 
@@ -102,7 +147,7 @@
     let bestArea = Infinity;
     for (const v of videos) {
       if (!isCandidate(v)) continue;
-      const r = baseRect(v);
+      const r = geom(v);
       if (pt.x < r.left || pt.x > r.right || pt.y < r.top || pt.y > r.bottom) continue;
       const area = r.width * r.height;
       if (area < bestArea) {
@@ -114,40 +159,48 @@
   }
 
   // ---------- ズーム ----------
-  function applyZoom(v, st, w, h) {
-    st.w = w;
-    st.h = h;
+  // 映像領域(g.cx,cy,cw,ch)の外へはみ出さないよう、ローカル座標でclipする。
+  // 点xはズーム後 tx + s*x に移るので、映像領域に写るのは x ∈ [(cx-tx)/s, (cx+cw-tx)/s]。
+  function syncControls(v, st) {
+    if (st.addedControls) v.controls = st.s <= 1; // 拡大中は標準UIも拡大されて崩れるので隠す
+  }
+
+  function applyZoom(v, st, g) {
+    st.sig = sigOf(g);
     if (st.s <= 1.001) {
       st.s = 1;
       st.tx = st.ty = 0;
       restoreProps(v, ZOOM_PROPS);
+      syncControls(v, st);
       return;
     }
-    st.tx = clamp(st.tx, w * (1 - st.s), 0);
-    st.ty = clamp(st.ty, h * (1 - st.s), 0);
     const s = st.s;
-    // 元の枠をローカル座標へ逆変換したものでclipし、親要素に手を入れずに枠内へ収める
-    const l = -st.tx / s;
-    const t = -st.ty / s;
-    const r = w - (w - st.tx) / s;
-    const b = h - (h - st.ty) / s;
+    st.tx = clamp(st.tx, (g.cx + g.cw) * (1 - s), g.cx * (1 - s));
+    st.ty = clamp(st.ty, (g.cy + g.ch) * (1 - s), g.cy * (1 - s));
+    const l = (g.cx - st.tx) / s;
+    const t = (g.cy - st.ty) / s;
+    const r = g.W - (g.cx + g.cw - st.tx) / s;
+    const b = g.H - (g.cy + g.ch - st.ty) / s;
     setImp(v, {
       'transform-origin': '0 0',
       transform: `translate(${st.tx}px, ${st.ty}px) scale(${s})`,
       'clip-path': `inset(${t}px ${r}px ${b}px ${l}px)`,
     });
+    syncControls(v, st);
   }
 
   function zoomBy(v, factor, cx, cy) {
+    const g = geom(v);
+    if (!g) return;
     const st = stateOf(v);
-    const r = baseRect(v);
     const ns = clamp(st.s * factor, 1, MAX_ZOOM);
-    const px = (cx ?? r.left + r.width / 2) - r.left;
-    const py = (cy ?? r.top + r.height / 2) - r.top;
+    // 画面座標 → ローカル座標
+    const px = cx == null ? g.cx + g.cw / 2 : (cx - g.bx) / g.k;
+    const py = cy == null ? g.cy + g.ch / 2 : (cy - g.by) / g.k;
     st.tx = px - (ns / st.s) * (px - st.tx);
     st.ty = py - (ns / st.s) * (py - st.ty);
     st.s = ns;
-    applyZoom(v, st, r.width, r.height);
+    applyZoom(v, st, g);
     refreshBar();
   }
 
@@ -156,6 +209,7 @@
     st.s = 1;
     st.tx = st.ty = 0;
     restoreProps(v, ZOOM_PROPS);
+    syncControls(v, st);
     refreshBar();
   }
 
@@ -412,11 +466,10 @@
   }
 
   function place(v) {
-    const r = baseRect(v);
+    const r = geom(v);
+    if (!r) return;
     const st = states.get(v);
-    if (st && st.s > 1 && (Math.abs(st.w - r.width) > 1 || Math.abs(st.h - r.height) > 1)) {
-      applyZoom(v, st, r.width, r.height); // リサイズ追従
-    }
+    if (st && st.s > 1 && st.sig !== sigOf(r)) applyZoom(v, st, r); // リサイズ・メタデータ読込に追従
     const bw = wrap.offsetWidth;
     const bh = wrap.offsetHeight;
     const left = clamp(r.right - bw - 10, 4, Math.max(4, innerWidth - bw - 4));
@@ -485,7 +538,7 @@
       if (st.s <= 1) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      pan = { v, x: e.clientX, y: e.clientY, tx: st.tx, ty: st.ty, moved: false };
+      pan = { v, g: geom(v), x: e.clientX, y: e.clientY, tx: st.tx, ty: st.ty, moved: false };
     },
     true
   );
@@ -507,9 +560,9 @@
       const dx = e.clientX - pan.x;
       const dy = e.clientY - pan.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) pan.moved = true;
-      st.tx = pan.tx + dx;
-      st.ty = pan.ty + dy;
-      applyZoom(pan.v, st, st.w, st.h);
+      st.tx = pan.tx + dx / pan.g.k;
+      st.ty = pan.ty + dy / pan.g.k;
+      applyZoom(pan.v, st, pan.g);
       lastActivity = performance.now();
     },
     true

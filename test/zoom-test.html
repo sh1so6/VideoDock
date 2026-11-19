@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8">
+<body style="margin:0;background:#345">
+<!-- video要素は枠いっぱい(640x600)、映像は16:9なので上下に黒帯(レターボックス) -->
+<div style="position:absolute;left:60px;top:40px;width:640px;height:600px;background:#000;transform:translateZ(0);overflow:hidden">
+  <video id="v" autoplay muted loop style="width:100%;height:100%;object-fit:contain;display:block"></video>
+</div>
+<script src="../content.js"></script>
+<script>
+const c=document.createElement('canvas');c.width=640;c.height=360;const g=c.getContext('2d');
+(function d(){g.fillStyle='#123';g.fillRect(0,0,640,360);g.strokeStyle='#4af';
+for(let x=0;x<=640;x+=40){g.strokeRect(x,0,1,360)}for(let y=0;y<=360;y+=40){g.strokeRect(0,y,640,1)}
+g.fillStyle='#fc0';g.fillRect(0,0,60,60);g.fillStyle='#f0f';g.fillRect(580,300,60,60);g.fillStyle='#fff';g.font='28px sans-serif';g.fillText('TL                       BR',10,200);requestAnimationFrame(d)})();
+v.srcObject=c.captureStream(30);
+const mode=location.hash.slice(1);
+setTimeout(()=>{
+  const opt=(x,y,extra)=>({clientX:x,clientY:y,bubbles:true,cancelable:true,altKey:true,...extra});
+  window.dispatchEvent(new PointerEvent('pointermove',opt(380,340)));
+  if(mode==='zoom'){ setTimeout(()=>{ window.dispatchEvent(new WheelEvent('wheel',opt(100,200,{deltaY:-500}))); },300); }
+},800);
+</script>

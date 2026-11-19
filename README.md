@@ -19,6 +19,7 @@
 - **ズーム**: video に `transform` と、元の枠に合わせた `clip-path` を付与（親要素は変更しない）
 - **最大化**: Popover API でトップレイヤーへ移動し `100vw × 100vh` に。祖先の `transform` / `z-index` / `overflow` の影響を受けない。サイト独自のUIは背面になるため、最大化中は標準コントロールを一時的に有効化
 - **iframe内の動画**: 子フレームが親へ要求し、親フレームが iframe 要素自体を最大化（ユーザー操作の伝播 `navigator.userActivation` を確認し、勝手な最大化を防止）
+- ズームの基準は`<video>`要素の枠ではなく、object-fit/object-positionを考慮した「映像が実際に描画されている領域」（レターボックス除外）
 - 動画の検出は MutationObserver + 3秒ごとの Shadow DOM 走査
 
 ## インストール / 動作確認
