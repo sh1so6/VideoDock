@@ -69,6 +69,7 @@
         if (area !== 'sync' || !ch.settings) return;
         mergeSettings(ch.settings.newValue);
         if (pip && pip.applySettings) pip.applySettings();
+        applyPageSettings();
       });
     }
   } catch (_) {}
@@ -1175,6 +1176,23 @@
       prune();
       pruneImages();
     }, 400);
+  }
+
+  // 設定変更をページ側へ即時反映する（関数宣言なのでonChangedから呼べる）。ボタンの位置・表示時間・トリガーは毎フレーム/毎イベントで設定を読むので、ここでは画像まわりだけ
+  function applyPageSettings() {
+    if (settings.imageMode === 'off') {
+      images.clear();
+      if (active && active.tagName === 'IMG') {
+        active = null;
+        hideToolbar();
+      }
+      keyDown = false;
+    } else {
+      deepCollect(document); // 「オフ」から切り替えた直後でも、すぐ画像を対象にする
+      if (active && active.tagName === 'IMG' && !isCandidate(active)) hideToolbar(); // 最小サイズを上げたとき
+    }
+    if (settings.imageMode !== 'key') keyDown = false;
+    if (!moveRaf) moveRaf = requestAnimationFrame(onMove); // 今のポインタ位置で出し直す
   }
 
   deepCollect(document);

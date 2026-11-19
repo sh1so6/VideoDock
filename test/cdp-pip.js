@@ -397,6 +397,12 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
       await sleep(300);
       check('画像: キー不要モードではホバーだけで出る', (await hit(ix, iy)) === true);
       await setS({ imageMode: 'off' });
+      await sleep(400);
+      check('画像: 設定をオフにすると表示中のボタンが即座に消える(ホットリロード)', (await hit(ix, iy)) === false);
+      await setS({ imageMode: 'always' });
+      await sleep(400);
+      check('画像: オフ→キー不要に戻すと、マウスを動かさなくても即座に出る(ホットリロード)', (await hit(ix, iy)) === true);
+      await setS({ imageMode: 'off' });
       await sleep(3300);
       await mv(Math.round(ir.left + 30), Math.round(ir.top + 40), 6);
       check('画像: オフでは出ない', (await hit(ix, iy)) === false);
