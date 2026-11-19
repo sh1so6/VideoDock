@@ -35,6 +35,10 @@
 2. `test/index.html` / `test/pip-test.html` を開いて確認（ローカルファイルは「ファイルのURLへのアクセスを許可する」をON）
 3. 自動テスト: `node test/cdp-pip.js [ext|direct]`。Chromeを起動し、CDPの本物の入力で `Alt+P`→ホイールズーム→ドラッグ→PiP内`Alt+P`/「タブに戻す」で閉じる→style・controlsの完全復元→`Alt+W`/`Esc`、までをassert（失敗時は非ゼロ終了）。`ext`（既定）は `Extensions.loadUnpacked` で拡張機能として読み込み、`direct` は `content.js` をページへ直接読み込む
 
+## 開発メモ（git / バージョン）
+- 初回のみ `git config core.hooksPath .githooks` を実行すると、コミットのたびに `manifest.json` の `version`（patch）が自動で +1 されます（`tools/bump-version.js`）。
+- 一時的に止める: `SKIP_BUMP=1 git commit ...`。minor/major を上げたいときは `manifest.json` を手で書き換えてステージすれば、その値が優先されます。
+
 ## 既知の制限
 - PiP中は `<video>` がページから抜けるため、サイトのプレーヤー表示が空になります。React系サイトでは、PiP中に再描画されて戻し先が失われると、動画を戻せないことがあります（コンソールに警告）。
 - サイトの IntersectionObserver / ResizeObserver 等が、動画の移動に反応することがあります。

@@ -1,0 +1,4 @@
+#!/bin/sh
+# 変更をコミットするたびに manifest.json の version(patch) を上げる
+node tools/bump-version.js || exit 1
+git add manifest.json
