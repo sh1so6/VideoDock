@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>VideoDock テストページ</title>
+<style>
+  body { font: 14px system-ui; margin: 24px; background: #f4f4f6; }
+  .box { width: 560px; transform: translateZ(0); filter: brightness(1); overflow: hidden; z-index: 1; position: relative; }
+  video, iframe { width: 100%; aspect-ratio: 16/9; display: block; background: #222; border: 0; }
+</style>
+<h1>VideoDock テストページ</h1>
+<p>canvas から生成した動画です。祖先に transform / filter / overflow:hidden があっても最大化できるか確認できます。</p>
+<div class="box"><video id="v" autoplay muted loop playsinline></video></div>
+<h2>iframe 内の動画</h2>
+<div class="box"><iframe id="f" srcdoc="<style>body{margin:0}video{width:100%;height:100%;display:block}</style><video id=v autoplay muted loop playsinline></video>"></iframe></div>
+<script>
+  function setup(doc) {
+    const c = doc.createElement('canvas'); c.width = 640; c.height = 360;
+    const g = c.getContext('2d'); let t = 0;
+    (function draw() {
+      t++;
+      g.fillStyle = '#123'; g.fillRect(0, 0, 640, 360);
+      g.strokeStyle = '#4af'; g.lineWidth = 1;
+      for (let x = 0; x <= 640; x += 40) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 360); g.stroke(); }
+      for (let y = 0; y <= 360; y += 40) { g.beginPath(); g.moveTo(0, y); g.lineTo(640, y); g.stroke(); }
+      g.fillStyle = '#fc0'; g.beginPath(); g.arc(320 + Math.cos(t / 30) * 200, 180 + Math.sin(t / 20) * 100, 30, 0, 7); g.fill();
+      g.fillStyle = '#fff'; g.font = '28px sans-serif'; g.fillText('VideoDock test  ' + t, 20, 40);
+      requestAnimationFrame(draw);
+    })();
+    return c.captureStream(30);
+  }
+  document.getElementById('v').srcObject = setup(document);
+  // iframe 側（srcdoc は同一オリジン）
+  const f = document.getElementById('f');
+  f.addEventListener('load', () => { const d = f.contentDocument; d.getElementById('v').srcObject = setup(document); });
+</script>
