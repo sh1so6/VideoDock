@@ -73,6 +73,13 @@ async function hover(c, x) {
   }
   return false;
 }
+// 右ボタンを押しながらホイール
+async function rwheel(c, x, y, dy, n = 1) {
+  await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'right', buttons: 2, clickCount: 1 });
+  for (let i = 0; i < n; i++) { await c.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy, buttons: 2 }); await sleep(80); }
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'right', buttons: 0, clickCount: 1 });
+}
+const wheel = (c, x, y, dy) => c.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy });
 const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringify([v.style.cssText,v.controls,v.parentNode.tagName]):"null"})()';
 
 (async () => {
@@ -93,9 +100,10 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
     }
     const main = await conn(t.webSocketDebuggerUrl);
     await main.send('Page.bringToFront');
-    await sleep(2500);
+    for (let i = 0; i < 40 && (await main.ev('!!window.__ready')) !== true; i++) await sleep(500); // テスト動画の録画完了待ち
+    await sleep(500);
     console.log(`mode=${MODE}`);
-    check('動画が再生中', (await main.ev('(()=>{const v=document.getElementById("v");return v.videoWidth>0&&!v.paused})()')) === true);
+    check('動画が再生中(長さのある動画)', (await main.ev('(()=>{const v=document.getElementById("v");return v.videoWidth>0&&!v.paused&&isFinite(v.duration)&&v.duration>6})()')) === true);
     check('documentPictureInPicture が使える(secure)', (await main.ev('!!window.documentPictureInPicture')) === true);
 
     const before = await main.ev(VSTATE);
@@ -130,10 +138,36 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
       await press(p, 'h', 'KeyH', 72); await sleep(150);
       check('もう一度Hキーで隠れる', (await uiShown()) === false);
 
-      for (let i = 0; i < 5; i++) { await p.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 60, y: 60, deltaX: 0, deltaY: -120 }); await sleep(80); }
+      // --- ホイール: 上部=音量 / 下部=シーク / 中央=何もしない（動画を止めて決定的に検証）---
+      const vs = () => p.ev('(()=>{const e=document.querySelector("video");return {vol:Math.round(e.volume*100)/100,t:e.currentTime,d:e.duration,z:document.querySelector(".zoomer").style.transform}})()');
+      await p.ev('(()=>{const e=document.querySelector("video");e.pause();e.muted=false;e.volume=0.5;e.currentTime=1;return 1})()');
+      await sleep(300);
+      let a = await vs();
+      await wheel(p, 400, 360, -100); await sleep(150);
+      let b = await vs();
+      check('中央部の通常ホイールは何もしない(音量/時間/ズーム不変)', b.vol === a.vol && Math.abs(b.t - a.t) < 0.05 && b.z === a.z, JSON.stringify([a, b]));
+      await wheel(p, 400, 60, -100); await sleep(150);
+      b = await vs();
+      check('上部でホイール上 = 音量UP', b.vol === 0.55, JSON.stringify(b));
+      await wheel(p, 400, 60, 100); await wheel(p, 400, 60, 100); await sleep(150);
+      b = await vs();
+      check('上部でホイール下 = 音量DOWN', b.vol === 0.45, JSON.stringify(b));
+      a = b;
+      await wheel(p, 400, 680, -100); await sleep(250);
+      b = await vs();
+      check('下部でホイール上 = 5秒進む', Math.abs(b.t - (a.t + 5)) < 0.3 || b.t >= b.d - 0.3, `${a.t} -> ${b.t}`);
+      check('下部のホイールでは音量が変わらない', b.vol === a.vol);
+      a = b;
+      await wheel(p, 400, 680, 100); await sleep(250);
+      b = await vs();
+      check('下部でホイール下 = 戻る', b.t < a.t - 3, `${a.t} -> ${b.t}`);
+      check('PiP窓のコンテキストメニューは抑止される', (await p.ev('(()=>{const e=new MouseEvent("contextmenu",{cancelable:true,bubbles:true});document.body.dispatchEvent(e);return e.defaultPrevented})()')) === true);
+      await p.ev('document.querySelector("video").play()');
+
+      await rwheel(p, 60, 60, -120, 5);
       await sleep(300);
       const z1 = parseT(await p.ev('document.querySelector(".zoomer").style.transform'));
-      check('ホイールでズームされる', !!z1 && z1.s > 2, JSON.stringify(z1));
+      check('右クリック+ホイールでズームされる', !!z1 && z1.s > 2, JSON.stringify(z1));
       check('ズーム%表示が一致', (await p.ev('document.querySelector(".zoom").textContent')) === Math.round((z1 ? z1.s : 0) * 100) + '%');
 
       // サイトのプレーヤーがstyleを書き換えたり<video>を動かしても、ズームが保たれること
@@ -152,7 +186,7 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
       check('ドラッグでパンされる(x方向 -60px)', !!z1 && !!z2 && Math.abs(z2.x - (z1.x - 60)) < 0.5, `${z1 && z1.x} -> ${z2 && z2.x}`);
       check('ドラッグ後に再生状態が変わらない', (await p.ev('!document.querySelector("video").paused')) === true);
 
-      await p.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 300, y: 300, deltaX: 0, deltaY: 3000 });
+      await rwheel(p, 300, 300, 3000);
       await sleep(300);
       check('縮小で100%(transform none)に戻る', (await p.ev('document.querySelector(".zoomer").style.transform')) === 'none');
 
@@ -169,6 +203,34 @@ const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringi
         await op.ev('chrome.storage.sync.remove("settings")');
         await sleep(500);
         check('設定を既定に戻すと再び隠れ、ボタンも戻る', (await uiShown()) === false && (await p.ev('!document.querySelector(".time").hidden')) === true);
+        // ホイールの入れ替え・反転
+        const base = await p.ev('(()=>{const e=document.querySelector("video");e.pause();e.muted=false;e.volume=0.5;e.currentTime=1;return 1})()');
+        await op.ev('chrome.storage.sync.set({settings:{wheelSwap:true}})');
+        await sleep(400);
+        await wheel(p, 400, 60, -100); await sleep(250);
+        let sw = await vs();
+        check('設定: 上下入れ替えで 上部=シーク(音量は不変)', sw.t > 5.5 && sw.vol === 0.5, JSON.stringify(sw));
+        await p.ev('(()=>{const e=document.querySelector("video");e.currentTime=1;return 1})()');
+        await wheel(p, 400, 680, -100); await sleep(150);
+        sw = await vs();
+        check('設定: 上下入れ替えで 下部=音量', sw.vol === 0.55 && sw.t < 1.5, JSON.stringify(sw));
+        await op.ev('chrome.storage.sync.set({settings:{wheelInvert:true}})');
+        await sleep(400);
+        await p.ev('(()=>{const e=document.querySelector("video");e.volume=0.5;e.currentTime=1;return 1})()');
+        await wheel(p, 400, 60, -100); await sleep(150);
+        sw = await vs();
+        check('設定: 反転で 上部のホイール上 = 音量DOWN', sw.vol === 0.45, JSON.stringify(sw));
+        await p.ev('(()=>{const e=document.querySelector("video");e.currentTime=1;return 1})()');
+        await wheel(p, 400, 680, -100); await sleep(250);
+        sw = await vs();
+        check('設定: 反転で 下部のホイール上 = 戻る(先頭でclamp)', sw.t < 1.2, JSON.stringify(sw));
+        await op.ev('chrome.storage.sync.set({settings:{zoomInvert:true}})');
+        await sleep(400);
+        await rwheel(p, 300, 300, -120, 3); await sleep(250);
+        check('設定: ズーム反転で 右クリック+ホイール上 = 縮小(100%のまま)', (await p.ev('document.querySelector(".zoomer").style.transform')) === 'none');
+        await op.ev('chrome.storage.sync.remove("settings")');
+        await sleep(400);
+        await p.ev('document.querySelector("video").play()');
         await fetch(`http://127.0.0.1:${PORT}/json/close/${created.id}`);
       }
 

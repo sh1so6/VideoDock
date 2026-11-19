@@ -12,6 +12,12 @@
     $('#edgeSize').value = s.edgeSize;
     $('#hideDelay').value = s.hideDelay;
     $('#showHint').checked = s.showHint;
+    document.querySelectorAll('input[name=wheelSwap]').forEach((r) => (r.checked = r.value === (s.wheelSwap ? '1' : '0')));
+    $('#wheelZone').value = s.wheelZone;
+    $('#wheelInvert').checked = s.wheelInvert;
+    $('#zoomInvert').checked = s.zoomInvert;
+    $('#volumeStep').value = s.volumeStep;
+    $('#seekStep').value = s.seekStep;
     document.querySelectorAll('[data-btn]').forEach((c) => (c.checked = !!s.buttons[c.dataset.btn]));
     const edge = s.uiMode === 'edge';
     $('#edgeSize').disabled = !edge;
@@ -31,6 +37,12 @@
       edgeSize: num('#edgeSize', D.edgeSize, 16, 300),
       hideDelay: num('#hideDelay', D.hideDelay, 200, 10000),
       showHint: $('#showHint').checked,
+      wheelSwap: (document.querySelector('input[name=wheelSwap]:checked') || {}).value === '1',
+      wheelZone: num('#wheelZone', D.wheelZone, 10, 45),
+      wheelInvert: $('#wheelInvert').checked,
+      zoomInvert: $('#zoomInvert').checked,
+      volumeStep: num('#volumeStep', D.volumeStep, 1, 25),
+      seekStep: num('#seekStep', D.seekStep, 1, 120),
       buttons,
     };
   }

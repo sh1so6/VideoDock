@@ -321,6 +321,10 @@
       .hint{position:fixed;top:8px;left:8px;padding:4px 8px;border-radius:6px;background:rgba(0,0,0,.6);
         opacity:0;transition:opacity .2s;pointer-events:none}
       .hint.show{opacity:1}
+      .osd{position:fixed;top:14px;left:50%;transform:translateX(-50%);padding:6px 14px;border-radius:8px;
+        background:rgba(0,0,0,.72);font-size:14px;font-variant-numeric:tabular-nums;opacity:0;
+        transition:opacity .15s;pointer-events:none;white-space:nowrap}
+      .osd.show{opacity:1}
       [hidden]{display:none!important}
     `;
 
@@ -350,18 +354,19 @@
     const zoomer = mk('div', { className: 'zoomer' }); // ズームはこの専用要素のtransformで行う（サイトのstyle書き換えの影響を受けない）
     stage.append(zoomer);
     const hint = mk('div', { className: 'hint' });
+    const osd = mk('div', { className: 'osd' });
     const btnPlay = mk('button', { title: '再生/一時停止 (Space)' });
     const seek = mk('input', { className: 'seek', type: 'range', min: 0, max: 1000, step: 1, value: 0 });
     const time = mk('span', { className: 'time' });
     const btnMute = mk('button', { title: 'ミュート (M)' });
     const btnOut = mk('button', { textContent: '−', title: '縮小 (-)' });
     const btnZoom = mk('button', { className: 'zoom', textContent: '100%', title: 'ズームをリセット (0)' });
-    const btnIn = mk('button', { textContent: '+', title: '拡大 (+ / ホイール)' });
+    const btnIn = mk('button', { textContent: '+', title: '拡大 (+ / 右クリック+ホイール)' });
     const btnBack = mk('button', { textContent: '⤴', title: 'タブに戻す' });
     const sepA = mk('span', { className: 'sep' });
     const sepB = mk('span', { className: 'sep' });
     const ui = mk('div', { className: 'ui' }, btnPlay, seek, time, btnMute, sepA, btnOut, btnZoom, btnIn, sepB, btnBack);
-    doc.body.append(stage, ui, hint);
+    doc.body.append(stage, ui, hint, osd);
 
     // --- <video>を移す ---
     const origCss = v.style.cssText;
@@ -499,15 +504,57 @@
       sync();
     });
 
-    // 操作: ホイールでズーム、ドラッグでパン、クリックで再生/停止、ダブルクリックでフィット/拡大切替
-    stage.addEventListener(
+    // 画面に一瞬出す表示（音量・シーク・ズーム量）
+    let osdTimer = 0;
+    const showOsd = (text) => {
+      osd.textContent = text;
+      osd.classList.add('show');
+      clearTimeout(osdTimer);
+      osdTimer = win.setTimeout(() => osd.classList.remove('show'), 900);
+    };
+    const changeVolume = (n) => {
+      const vol = clamp((v.muted ? 0 : v.volume) + (n * settings.volumeStep) / 100, 0, 1);
+      if (vol > 0) v.muted = false;
+      v.volume = vol;
+      showOsd(`🔊 音量 ${Math.round(vol * 100)}%`);
+    };
+    const seekBy = (n) => {
+      const d = v.duration;
+      if (!isFinite(d) || d <= 0) return showOsd('ライブ配信はシークできません');
+      const t = clamp(v.currentTime + n * settings.seekStep, 0, d);
+      v.currentTime = t;
+      showOsd(`${n > 0 ? '⏩' : '⏪'} ${fmt(t)} / ${fmt(d)}`);
+    };
+
+    // 操作: 右クリック+ホイール=ズーム / 上部ホイール・下部ホイール=音量・シーク（上下の割り当て・向きは設定で変更）
+    // 中央部の通常ホイールは何もしない。
+    doc.addEventListener(
       'wheel',
       (e) => {
         e.preventDefault();
-        zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
+        const unit = e.deltaMode === 1 ? e.deltaY / 3 : e.deltaY / 100; // 1ノッチ≒1（トラックパッドは小数）
+        if (unit === 0) return;
+        if (e.buttons & 2) {
+          // 右ボタンを押しながら → ズーム（カーソル位置が中心）
+          const dir = settings.zoomInvert ? 1 : -1;
+          zoomAt(Math.exp(dir * unit * 0.15), e.clientX, e.clientY);
+          showOsd(`🔍 ${Math.round(z.s * 100)}%`);
+          return;
+        }
+        const h = win.innerHeight;
+        const zone = h * (settings.wheelZone / 100);
+        const inTop = e.clientY <= zone;
+        const inBottom = e.clientY >= h - zone;
+        if (!inTop && !inBottom) return;
+        const topIsVolume = !settings.wheelSwap;
+        const n = (settings.wheelInvert ? 1 : -1) * unit; // 既定: ホイール上 = 音量UP / 進む
+        if (inTop === topIsVolume) changeVolume(n);
+        else seekBy(n);
       },
       { passive: false }
     );
+    // 右クリック+ホイールを使うので、PiP窓ではコンテキストメニューを出さない
+    doc.addEventListener('contextmenu', (e) => e.preventDefault());
     let drag = null;
     let clickTimer = 0;
     stage.addEventListener('pointerdown', (e) => {
@@ -627,7 +674,7 @@
     applyZoom();
     applySettings();
     if (settings.showHint) {
-      hint.textContent = 'ホイール: ズーム / ドラッグ: 移動 / ダブルクリック: 拡大⇔戻す / H: 操作バー';
+      hint.textContent = '右クリック+ホイール: ズーム / 上部ホイール: 音量 / 下部ホイール: シーク / ドラッグ: 移動 / ダブルクリック: 拡大⇔戻す / H: 操作バー';
       hint.classList.add('show');
       win.setTimeout(() => hint.classList.remove('show'), 3500);
     }

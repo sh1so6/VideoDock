@@ -33,6 +33,18 @@
 </fieldset>
 
 <fieldset>
+  <legend>PiPウィンドウのホイール操作</legend>
+  <div class="sub" style="margin-left:0">右クリックを押しながらホイール = ズーム（カーソル位置が中心）。窓の上部・下部でのホイールは次の割り当てです。中央部は何もしません。</div>
+  <label><input type="radio" name="wheelSwap" value="0"> 上部 = 音量 / 下部 = シーク <span class="sub">（既定）</span></label>
+  <label><input type="radio" name="wheelSwap" value="1"> 上部 = シーク / 下部 = 音量</label>
+  <div class="row">上部・下部の範囲 <input type="number" id="wheelZone" min="10" max="45" step="5"> %（窓の高さに対して）</div>
+  <label><input type="checkbox" id="wheelInvert"> 音量・シークのホイール向きを反転 <span class="sub">既定: 上 = 音量UP / 進む</span></label>
+  <label><input type="checkbox" id="zoomInvert"> ズームのホイール向きを反転 <span class="sub">既定: 上 = 拡大</span></label>
+  <div class="row">音量: 1ノッチあたり <input type="number" id="volumeStep" min="1" max="25" step="1"> %</div>
+  <div class="row">シーク: 1ノッチあたり <input type="number" id="seekStep" min="1" max="120" step="1"> 秒</div>
+</fieldset>
+
+<fieldset>
   <legend>表示するボタン</legend>
   <div class="grid">
     <label><input type="checkbox" data-btn="play"> 再生 / 一時停止</label>
