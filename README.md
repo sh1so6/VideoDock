@@ -27,12 +27,13 @@
 - **最大化**: Popover API でトップレイヤーへ移動し `100vw × 100vh` に。祖先の `transform` / `z-index` / `overflow` の影響を受けない。サイト独自のUIは背面になるため、最大化中は標準コントロールを一時的に有効化。
 - **iframe内の動画の最大化**: 子フレームが親へ要求し、親フレームが iframe 要素自体を最大化（`navigator.userActivation` を確認し、勝手な最大化を防止）。
 - ツールバー位置は `object-fit` を考慮した「映像が実際に描画されている領域」基準。
+- PiPウィンドウ自体（トップレベルの about:blank）には content script を動かさない（拡張が自動注入され、操作を横取りしたため）
 - 動画の検出は MutationObserver + 3秒ごとの Shadow DOM 走査。
 
 ## インストール / 動作確認
 1. `chrome://extensions` → デベロッパーモード → 「パッケージ化されていない拡張機能を読み込む」で本フォルダを選択
 2. `test/index.html` / `test/pip-test.html` を開いて確認（ローカルファイルは「ファイルのURLへのアクセスを許可する」をON）
-3. 自動テスト: `node test/cdp-pip.js`（Chromeを起動し、CDPの本物の入力で `Alt+P`→ホイールズーム→ドラッグ→タブに戻す、までを検証。`test/pip-test.html` は `content.js` を直接読み込む）
+3. 自動テスト: `node test/cdp-pip.js [ext|direct]`。Chromeを起動し、CDPの本物の入力で `Alt+P`→ホイールズーム→ドラッグ→PiP内`Alt+P`/「タブに戻す」で閉じる→style・controlsの完全復元→`Alt+W`/`Esc`、までをassert（失敗時は非ゼロ終了）。`ext`（既定）は `Extensions.loadUnpacked` で拡張機能として読み込み、`direct` は `content.js` をページへ直接読み込む
 
 ## 既知の制限
 - PiP中は `<video>` がページから抜けるため、サイトのプレーヤー表示が空になります。React系サイトでは、PiP中に再描画されて戻し先が失われると、動画を戻せないことがあります（コンソールに警告）。

@@ -1,70 +1,164 @@
-// Document PiP の実機自動テスト: node test/cdp-pip.js
-// headfulのChromeを起動し、CDPで本物の入力(ユーザー操作)を送ってAlt+Pを押す
+// Document PiP の実機テスト:  node test/cdp-pip.js [ext|direct]
+//   ext    (既定) 拡張機能として --load-extension で読み込み、isolated world の content script を検証
+//   direct content.js をページに直接読み込む（拡張ロードができない環境用）
+// headful の Chrome を起動し、CDP の本物の入力（ユーザー操作扱い）で Alt+P を押す。失敗時は非ゼロ終了。
 const { spawn } = require('child_process');
+const http = require('http');
 const path = require('path'), fs = require('fs'), os = require('os');
-const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const PORT = 9333;
-const page = 'file:///' + path.resolve(__dirname, 'pip-test.html').split(path.sep).join('/');
-const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'vd-'));
+const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const MODE = process.argv[2] || 'ext';
+const ROOT = path.resolve(__dirname, '..');
+const PORT = 9333, HTTP_PORT = 8765;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const chrome = spawn(CHROME, [`--user-data-dir=${prof}`, `--remote-debugging-port=${PORT}`, '--no-first-run',
-  '--no-default-browser-check', '--autoplay-policy=no-user-gesture-required', '--window-size=900,760', page], { stdio: 'ignore' });
+let failed = 0;
+const check = (name, cond, extra = '') => {
+  console.log((cond ? 'PASS' : 'FAIL') + '  ' + name + (extra ? '  ' + extra : ''));
+  if (!cond) failed++;
+};
+
+// localhost は secure context（Document PiP が使える）。file:// だと拡張のファイルアクセス許可が要るのでhttpで配信
+const server = http
+  .createServer((req, res) => {
+    const f = path.join(ROOT, decodeURIComponent(req.url.split('?')[0].split('#')[0]));
+    if (!f.startsWith(ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) {
+      res.writeHead(404);
+      return res.end();
+    }
+    res.writeHead(200, { 'content-type': f.endsWith('.html') ? 'text/html; charset=utf-8' : f.endsWith('.js') ? 'text/javascript' : 'application/octet-stream' });
+    fs.createReadStream(f).pipe(res);
+  })
+  .listen(HTTP_PORT, '127.0.0.1');
+
+const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'vd-'));
+const args = [
+  `--user-data-dir=${prof}`, `--remote-debugging-port=${PORT}`, '--no-first-run', '--no-default-browser-check',
+  '--autoplay-policy=no-user-gesture-required', '--window-size=900,760',
+];
+if (MODE === 'ext') args.push('--enable-unsafe-extension-debugging', '--remote-allow-origins=*');
+args.push(`http://127.0.0.1:${HTTP_PORT}/test/pip-test.html${MODE === 'direct' ? '#direct' : ''}`);
+const chrome = spawn(CHROME, args, { stdio: 'ignore' });
+
 async function conn(wsUrl) {
-  const ws = new WebSocket(wsUrl); let id = 0; const cb = new Map();
+  const ws = new WebSocket(wsUrl);
+  let id = 0;
+  const cb = new Map();
   await new Promise((r) => (ws.onopen = r));
-  ws.onmessage = (m) => { const d = JSON.parse(m.data); if (d.id && cb.has(d.id)) { cb.get(d.id)(d); cb.delete(d.id); } };
+  ws.onmessage = (m) => {
+    const d = JSON.parse(m.data);
+    if (d.id && cb.has(d.id)) { cb.get(d.id)(d); cb.delete(d.id); }
+    else if (process.env.DEBUG && (d.method === 'Runtime.exceptionThrown' || d.method === 'Runtime.consoleAPICalled')) console.log('  [console]', JSON.stringify(d.params).slice(0, 400));
+  };
   const send = (method, params = {}) => new Promise((res) => { const i = ++id; cb.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
-  const ev = async (expr) => { const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }); return r.result.exceptionDetails ? 'EXC:' + JSON.stringify(r.result.exceptionDetails.exception && r.result.exceptionDetails.exception.description) : r.result.result.value; };
-  return { send, ev, ws };
+  const ev = async (expr) => {
+    const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
+    return r.result.exceptionDetails ? 'EXC:' + JSON.stringify(r.result.exceptionDetails.exception && r.result.exceptionDetails.exception.description) : r.result.result.value;
+  };
+  if (process.env.DEBUG) send('Runtime.enable');
+  return { send, ev };
 }
 const targets = async () => (await (await fetch(`http://127.0.0.1:${PORT}/json`)).json()).filter((t) => t.type === 'page');
+const key = async (c, type, k, code, vk, modifiers = 0) => c.send('Input.dispatchKeyEvent', { type, modifiers, key: k, code, windowsVirtualKeyCode: vk });
+const press = async (c, k, code, vk, modifiers = 0) => { await key(c, 'rawKeyDown', k, code, vk, modifiers); await key(c, 'keyUp', k, code, vk, modifiers); };
+const parseT = (t) => {
+  const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(t || '');
+  return m ? { x: +m[1], y: +m[2], s: +m[3] } : null;
+};
+// ツールバー(=hover検出済み)が出るまでマウスを動かして待つ
+async function hover(c, x) {
+  for (let i = 0; i < 20; i++) {
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x + (i % 2), y: 340 });
+    await sleep(250);
+    if ((await c.ev('!!document.querySelector("[data-videodock]")')) === true) return true;
+  }
+  return false;
+}
+const VSTATE = '(()=>{const v=document.getElementById("v");return v?JSON.stringify([v.style.cssText,v.controls,v.parentNode.tagName]):"null"})()';
+
 (async () => {
   try {
-    let t; for (let i = 0; i < 40 && !t; i++) { await sleep(500); try { t = (await targets()).find((x) => x.url.includes('pip-test')); } catch (_) {} }
+    let t;
+    for (let i = 0; i < 40 && !t; i++) { await sleep(500); try { t = (await targets()).find((x) => x.url.includes('pip-test')); } catch (_) {} }
+    if (!t) throw new Error('テストページに接続できません');
+    if (MODE === 'ext') {
+      // 新しいChromeは --load-extension を無視するので、CDPの Extensions.loadUnpacked で読み込む
+      const ver = await (await fetch(`http://127.0.0.1:${PORT}/json/version`)).json();
+      const br = await conn(ver.webSocketDebuggerUrl);
+      const r = await br.send('Extensions.loadUnpacked', { path: ROOT.split(path.sep).join('/') });
+      console.log('loadUnpacked:', JSON.stringify(r.result || r.error));
+      const pg = await conn(t.webSocketDebuggerUrl);
+      await pg.send('Page.reload');
+      await sleep(1500);
+    }
     const main = await conn(t.webSocketDebuggerUrl);
     await main.send('Page.bringToFront');
-    await sleep(1500);
-    console.log('video playing:', await main.ev('(()=>{const v=document.getElementById("v");return [v.videoWidth,!v.paused,!!window.documentPictureInPicture,window.isSecureContext].join(",")})()'));
-    await main.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 380, y: 340 });
-    await sleep(500);
-    console.log('toolbar host:', await main.ev('!!document.querySelector("[data-videodock]")'), ' loaded:', await main.ev('!!window.__videoDockLoaded'));
-    // Alt+P (本物のキー入力 → ユーザーアクティベーション付き)
-    const key = (type) => main.send('Input.dispatchKeyEvent', { type, modifiers: 1, key: 'p', code: 'KeyP', windowsVirtualKeyCode: 80 });
-    await key('rawKeyDown'); await key('keyUp');
-    await sleep(2000);
-    console.log('toast/err:', await main.ev('document.title'));
-    const ts = await targets();
-    console.log('targets:', ts.map((x) => x.title + ' | ' + x.url.slice(0, 40)));
-    console.log('main: pipWindow=', await main.ev('!!documentPictureInPicture.window'),
-      ' video.ownerDocument is main=', await main.ev('document.getElementById("v").ownerDocument===document'));
-    const pt = ts.find((x) => !x.url.includes('pip-test'));
-    if (pt) {
+    await sleep(2500);
+    console.log(`mode=${MODE}`);
+    check('動画が再生中', (await main.ev('(()=>{const v=document.getElementById("v");return v.videoWidth>0&&!v.paused})()')) === true);
+    check('documentPictureInPicture が使える(secure)', (await main.ev('!!window.documentPictureInPicture')) === true);
+
+    const before = await main.ev(VSTATE);
+    for (let round = 1; round <= 2; round++) {
+      console.log(`--- round ${round} (${round === 1 ? 'PiP内でAlt+Pで閉じる' : '「タブに戻す」ボタンで閉じる'}) ---`);
+      await hover(main, 380 + round);
+      await press(main, 'p', 'KeyP', 80, 1);
+      let pt;
+      for (let i = 0; i < 10 && !pt; i++) { await sleep(400); pt = (await targets()).find((x) => !x.url.includes('pip-test')); }
+      check('Alt+PでPiP窓が開く', !!pt);
+      if (!pt) break;
+      check('opener側 documentPictureInPicture.window がある', (await main.ev('!!documentPictureInPicture.window')) === true);
       const p = await conn(pt.webSocketDebuggerUrl);
-      console.log('pip: video inside=', await p.ev('!!document.querySelector(".stage video")'),
-        ' paused=', await p.ev('document.querySelector("video").paused'),
-        ' size=', await p.ev('innerWidth+"x"+innerHeight'));
-      const shot = async (name) => { const r = await p.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(__dirname, name), Buffer.from(r.result.data, 'base64')); };
-      await shot('pip-1.png');
-      // ホイールでズーム (カーソル左上寄り)
+      await sleep(500);
+      check('<video>がPiP窓へ移動している', (await p.ev('!!document.querySelector(".stage video")')) === true);
+      check('移動後も再生が続いている', (await p.ev('!document.querySelector("video").paused')) === true);
+      check('PiP窓にスタイルが適用されている', (await p.ev('getComputedStyle(document.querySelector(".stage")).position')) === 'fixed');
+
       for (let i = 0; i < 5; i++) { await p.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 60, y: 60, deltaX: 0, deltaY: -120 }); await sleep(80); }
       await sleep(300);
-      console.log('zoom label:', await p.ev('document.querySelector(".zoom").textContent'),
-        ' transform:', await p.ev('document.querySelector("video").style.transform'));
-      await shot('pip-2.png');
-      // ドラッグでパン
-      await p.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 100, y: 100, button: 'left', clickCount: 1 });
-      await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 160, y: 140, button: 'left' });
-      await p.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 160, y: 140, button: 'left', clickCount: 1 });
+      const z1 = parseT(await p.ev('document.querySelector("video").style.transform'));
+      check('ホイールでズームされる', !!z1 && z1.s > 2, JSON.stringify(z1));
+      check('ズーム%表示が一致', (await p.ev('document.querySelector(".zoom").textContent')) === Math.round((z1 ? z1.s : 0) * 100) + '%');
+
+      await p.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 300, y: 300, button: 'left', clickCount: 1 });
+      await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 240, y: 300, button: 'left' });
+      await p.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 240, y: 300, button: 'left', clickCount: 1 });
+      await sleep(400);
+      const z2 = parseT(await p.ev('document.querySelector("video").style.transform'));
+      check('ドラッグでパンされる(x方向 -60px)', !!z1 && !!z2 && Math.abs(z2.x - (z1.x - 60)) < 0.5, `${z1 && z1.x} -> ${z2 && z2.x}`);
+      check('ドラッグ後に再生状態が変わらない', (await p.ev('!document.querySelector("video").paused')) === true);
+
+      await p.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 300, y: 300, deltaX: 0, deltaY: 3000 });
       await sleep(300);
-      console.log('after pan transform:', await p.ev('document.querySelector("video").style.transform'));
-      await shot('pip-3.png');
-      // 閉じて戻る
-      await p.ev('document.querySelector("button[title=\\"タブに戻す\\"]").click()');
-      await sleep(1000);
-      console.log('after close: video back in page=', await main.ev('document.getElementById("v").ownerDocument===document && document.getElementById("v").isConnected'),
-        ' playing=', await main.ev('!document.getElementById("v").paused'),
-        ' style=', await main.ev('document.getElementById("v").style.cssText'));
+      check('縮小で100%(transform none)に戻る', (await p.ev('document.querySelector("video").style.transform')) === 'none');
+
+      if (round === 1) {
+        await Promise.race([p.send('Page.bringToFront'), sleep(1000)]);
+        // 窓が閉じるとCDP応答が返らないので待たない
+        await Promise.race([press(p, 'p', 'KeyP', 80, 1), sleep(1500)]);
+      } else {
+        await Promise.race([p.ev('document.querySelector("button[title=\\"タブに戻す\\"]").click()'), sleep(1500)]);
+      }
+      await sleep(1200);
+      check('PiP窓が閉じた', (await main.ev('!documentPictureInPicture.window')) === true);
+      const after = await main.ev(VSTATE);
+      check('<video>が元の位置に戻りstyle/controlsが完全に復元', after === before, after === before ? '' : `before=${before} after=${after}`);
+      check('戻った後も再生が続いている', (await main.ev('(()=>{const v=document.getElementById("v");return v.ownerDocument===document&&v.isConnected&&!v.paused})()')) === true);
     }
-  } catch (e) { console.log('ERR', e); }
-  chrome.kill(); process.exit(0);
+
+    // 最大表示 (Alt+W) → Esc
+    await main.send('Page.bringToFront');
+    await hover(main, 390);
+    await press(main, 'w', 'KeyW', 87, 1);
+    await sleep(500);
+    check('Alt+Wで最大表示(トップレイヤー)になる', (await main.ev('document.getElementById("v").matches(":popover-open")')) === true);
+    await press(main, 'Escape', 'Escape', 27);
+    await sleep(500);
+    check('Escで最大表示が解除され元のstyleに戻る', (await main.ev('document.getElementById("v").hasAttribute("popover")')) === false && (await main.ev(VSTATE)) === before);
+  } catch (e) {
+    console.log('ERR', e);
+    failed++;
+  }
+  console.log(failed ? `\n${failed} 件失敗` : '\n全て成功');
+  chrome.kill();
+  server.close();
+  process.exit(failed ? 1 : 0);
 })();

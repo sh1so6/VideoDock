@@ -4,7 +4,7 @@
 <div style="position:absolute;left:60px;top:40px;width:640px;height:600px;background:#000;transform:translateZ(0);overflow:hidden">
   <video id="v" autoplay muted loop style="width:100%;height:100%;object-fit:contain;display:block"></video>
 </div>
-<script src="../content.js"></script>
+<script>if(location.hash==="#direct"){const s=document.createElement("script");s.src="../content.js";document.head.append(s)}</script>
 <script>
 const c=document.createElement('canvas');c.width=640;c.height=360;const g=c.getContext('2d');
 (function d(){g.fillStyle='#123';g.fillRect(0,0,640,360);g.strokeStyle='#4af';

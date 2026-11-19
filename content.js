@@ -7,6 +7,9 @@
 (() => {
   'use strict';
   if (window.__videoDockLoaded) return;
+  // Document PiP のウィンドウ(トップレベルのabout:blank)には拡張機能が自動注入されるが、
+  // そこで二重に動くと操作を横取りするため何もしない
+  if (window === window.top && location.protocol === 'about:') return;
   window.__videoDockLoaded = true;
 
   // ---------- 定数 ----------
@@ -279,19 +282,7 @@
     refreshBar();
   }
 
-  // PiPウィンドウ内のUIとズーム/パン。<video>を移し、閉じたら元へ戻す。
-  function buildPip(win, v) {
-    const doc = win.document;
-    const mk = (tag, props, ...kids) => {
-      const n = doc.createElement(tag);
-      if (props) Object.assign(n, props);
-      n.append(...kids);
-      return n;
-    };
-
-    // CSPやTrusted Typesの影響を避けるため、PiP側のコンストラクタでadoptedStyleSheetsを使う
-    const sheet = new win.CSSStyleSheet();
-    sheet.replaceSync(`
+  const PIP_CSS = `
       html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#fff;
         font:12px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif;user-select:none}
       .stage{position:fixed;inset:0;overflow:hidden;background:#000;touch-action:none}
@@ -311,8 +302,28 @@
       .hint{position:fixed;top:8px;left:8px;padding:4px 8px;border-radius:6px;background:rgba(0,0,0,.6);
         opacity:0;transition:opacity .2s;pointer-events:none}
       .hint.show{opacity:1}
-    `);
-    doc.adoptedStyleSheets = [sheet];
+    `;
+
+  // PiPウィンドウ内のUIとズーム/パン。<video>の移動は同期的に行うこと（awaitを挟むとpauseされる）。<video>を移し、閉じたら元へ戻す。
+  function buildPip(win, v) {
+    const doc = win.document;
+    const mk = (tag, props, ...kids) => {
+      const n = doc.createElement(tag);
+      if (props) Object.assign(n, props);
+      n.append(...kids);
+      return n;
+    };
+
+    // 別realmのCSSStyleSheetをadoptできない/CSPで弾かれる場合に備え、両方式を試す
+    try {
+      const sheet = new win.CSSStyleSheet();
+      sheet.replaceSync(PIP_CSS);
+      doc.adoptedStyleSheets = [sheet];
+    } catch (_) {
+      const st = doc.createElement('style');
+      st.textContent = PIP_CSS;
+      doc.head.append(st);
+    }
     doc.title = document.title || 'VideoDock';
 
     const stage = mk('div', { className: 'stage' });
@@ -494,6 +505,11 @@
       toggleFill(e.clientX, e.clientY);
     });
     doc.addEventListener('keydown', (e) => {
+      if (e.altKey && e.code === 'KeyP') {
+        e.preventDefault();
+        close();
+        return;
+      }
       if (e.target === seek && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
       switch (e.key) {
         case ' ': case 'k': togglePlay(); break;
